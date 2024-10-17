@@ -5,6 +5,7 @@ static size_t cublaslt_workspace_size = 32 * 1024 * 1024;
 static void* cublaslt_workspace = NULL;
 static cublasComputeType_t cublas_compute_type;
 static cublasLtHandle_t cublaslt_handle;
+static cudnnHandle_t cudnn_handle;
 static int cuda_arch_major = 0;
 static int cuda_arch_minor = 0;
 static int cuda_num_SMs = 0; // for persistent threads where we want 1 threadblock per SM
@@ -26,7 +27,7 @@ void cuda_init(void)
     printf("CUDA device: %s, major %d, minor %d, num_SMs: %d, threads_per_SM: %d\n",
             deviceProp.name, cuda_arch_major, cuda_arch_minor, cuda_num_SMs, cuda_threads_per_SM);
 
-    // setup cuBLASLt
+    cudnn_check(cudnnCreate(&cudnn_handle));
     cublas_check(cublasLtCreate(&cublaslt_handle));
     cuda_check(cudaMalloc(&cublaslt_workspace, cublaslt_workspace_size));
 
@@ -39,6 +40,7 @@ void cuda_fini(void)
 {
     cuda_check(cudaFree(cublaslt_workspace));
     cublas_check(cublasLtDestroy(cublaslt_handle));
+    cudnn_check(cudnnDestroy(cudnn_handle));
 }
 
 /*
@@ -127,4 +129,36 @@ void matmul(float *out, const float *inp, const float *weight, const float *bias
     cublas_check(cublasLtMatrixLayoutDestroy(inp_layout));
     cublas_check(cublasLtMatrixLayoutDestroy(out_layout));
     cublas_check(cublasLtMatrixLayoutDestroy(bias_layout));
+}
+
+/*
+ * Row-wise softmax
+ * @param input: shape (row, column)
+ * @param output: shape (row, column)
+ * @param row: row size
+ * @param col: column size
+ */
+void softmax(float* input, float* output, int row, int col)
+{
+    cudnnTensorDescriptor_t inputDesc, outputDesc;
+    cudnn_check(cudnnCreateTensorDescriptor(&inputDesc));
+    cudnn_check(cudnnCreateTensorDescriptor(&outputDesc));
+
+    cudnn_check(cudnnSetTensor4dDescriptor(inputDesc, CUDNN_TENSOR_NCHW, CUDNN_DATA_FLOAT, row, col, 1, 1));
+    cudnn_check(cudnnSetTensor4dDescriptor(outputDesc, CUDNN_TENSOR_NCHW, CUDNN_DATA_FLOAT, row, col, 1, 1));
+
+    float *d_input, *d_output;
+    cuda_check(cudaMalloc(&d_input, row*col*sizeof(float)));
+    cuda_check(cudaMalloc(&d_output, row*col*sizeof(float)));
+    cuda_check(cudaMemcpy(d_input, input, row*col*sizeof(float), cudaMemcpyHostToDevice));
+
+    float alpha = 1.0f, beta = 0.0f;
+    cudnn_check(cudnnSoftmaxForward(cudnn_handle, CUDNN_SOFTMAX_ACCURATE, CUDNN_SOFTMAX_MODE_CHANNEL, &alpha,
+                                    inputDesc, d_input, &beta, outputDesc, d_output));
+    cuda_check(cudaMemcpy(output, d_output, row*col*sizeof(float), cudaMemcpyDeviceToHost));
+
+    cudaFree(d_input);
+    cudaFree(d_output);
+    cudnnDestroyTensorDescriptor(inputDesc);
+    cudnnDestroyTensorDescriptor(outputDesc);
 }

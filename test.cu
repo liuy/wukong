@@ -47,4 +47,15 @@ TEST(Cuda, matmul)
     assert_array_eq(res, out, b * r * oc);
     matmul(out, inp, weight, nullptr, b, r, c, oc);
     assert_array_eq(res_nob, out, b * r * oc);
+
+}
+
+TEST(Cuda, softmax)
+{
+    float inp[2 * 3] = {2.0f, 2.0f, 2.0f, 4.0f, 1000.0f, 1.0f};
+    float out[2 * 3] = {0};
+    float res[] = {0.333333f, 0.333333f, 0.333333f, 0.000000f, 1.000000f, 0.000000f};
+
+    softmax(inp, out, 2, 3);
+    assert_array_eq(res, out, 6);
 }

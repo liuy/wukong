@@ -9,14 +9,14 @@ set(FILES
     common.h
 )
 add_executable(wukong ${FILES})
-target_link_libraries(wukong -lcublasLt)
+target_link_libraries(wukong -lcublasLt -lcudnn)
 
 option(CF_TEST "Enable tests" off)
 if(CF_TEST)
     enable_testing()
     find_package(GTest)
     add_executable(test_cuda test.cu ${FILES})
-    target_link_libraries(test_cuda GTest::gtest_main -lcublasLt)
+    target_link_libraries(test_cuda GTest::gtest_main -lcublasLt -lcudnn)
     gtest_discover_tests(test_cuda)
 endif()
 
