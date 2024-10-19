@@ -10,6 +10,7 @@ wukong:
 test:
 	@cmake -B build -DCF_TEST=on && cmake --build build -t test_cuda # -t test -- ARGS="-V"
 	@./build/test_cuda
+	@go test -v ./...
 
 clean:
 	@rm -rf build

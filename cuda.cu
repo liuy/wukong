@@ -69,7 +69,7 @@ void matmul(float *out, const float *inp, const float *weight, const float *bias
     cublasLtEpilogue_t epilogue = has_bias ? CUBLASLT_EPILOGUE_BIAS : CUBLASLT_EPILOGUE_DEFAULT;
 
     /*
-     * Cuda is colum-major, for row-major storage, if we want to get: out = inp @ weight, 'out' should be 'out.T'.
+     * Cuda is colum-major, for row-major Array, if we want to get: out = inp @ weight, 'out' should be 'out.T'.
      * Mathematically, out.T = weight.T @ inp.T. Since cuda is colum-major, 'weight.T' should be weight, 'inp.T' should be inp.
      * so calculating out.T = weight & inp.
      */
