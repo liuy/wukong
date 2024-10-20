@@ -2,6 +2,7 @@ package Array
 
 import (
 	"fmt"
+	"math"
 	"testing"
 )
 
@@ -70,4 +71,54 @@ func TestMakeArray(t *testing.T) {
 			t.Errorf("MakeArrayFrom(%v, %v) = %v, want valid = %v", tt.Shape, tt.data, err, tt.valid)
 		}
 	}
+}
+
+func TestArraySoftmax(t *testing.T) {
+	CudaSetup()
+	defer CudaTeardown()
+
+	tests := []struct {
+		shape    Shape
+		input    []float32
+		expected []float32
+	}{
+		{Shape{1, 3}, []float32{1.0, 1.0, 1.0}, []float32{0.33333333, 0.33333333, 0.33333333}},
+		{Shape{2, 1, 3}, []float32{3.0, 1.0, 0.2, 1, 1000, 2}, []float32{0.8360188, 0.11314284, 0.05083836, 0.0, 1.0, 0.0}},
+	}
+
+	a, err := MakeArrayFrom(Shape{3}, []float32{1.0, 2.0, 3.0})
+	if err != nil {
+		t.Fatalf("MakeArrayFrom() error = %v", err)
+	}
+	if _, err := a.Softmax(); err == nil {
+		t.Fatal("Array.Softmax() should have failed")
+	}
+
+	for _, tt := range tests {
+		array, err := MakeArrayFrom(tt.shape, tt.input)
+		if err != nil {
+			t.Fatalf("MakeArrayFrom(%v, %v) failed: %v", tt.shape, tt.input, err)
+		}
+
+		res, err := array.Softmax()
+		if err != nil {
+			t.Fatalf("Array.Softmax() failed: %v", err)
+		}
+		if !equal(res, tt.expected) {
+			t.Errorf("Array.Softmax() = %v, want %v", res, tt.expected)
+		}
+	}
+}
+
+func equal(a *Array, expected []float32) bool {
+	if a.Size() != len(expected) {
+		return false
+	}
+
+	for i, v := range expected {
+		if math.Abs(float64(a.GetElem(i).(float32)-v)) > 1e-6 {
+			return false
+		}
+	}
+	return true
 }

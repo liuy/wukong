@@ -1,4 +1,4 @@
-#include "common.h"
+#include "wukong.h"
 #include <gtest/gtest.h>
 
 static inline void assert_array_eq(const float *a, const float *b, size_t n)

@@ -50,10 +50,12 @@ static inline void _printm(const char *name, float* matrix, int batch, int row, 
 
 #define printm(mat, batch, row, col) _printm(#mat, mat, batch, row, col)
 
-extern void cuda_init();
-extern void cuda_fini();
-extern void matmul(float *out, const float *inp, const float *weight, const float *bias,
+extern "C" {
+void cuda_init(void);
+void cuda_fini(void);
+void matmul(float *out, const float *inp, const float *weight, const float *bias,
                    int batch, int row, int column, int oc);
-extern void softmax(float* input, float* output, int row, int col);
+void softmax(float* input, float* output, int row, int col);
+}
 
 #endif

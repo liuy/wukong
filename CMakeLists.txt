@@ -6,9 +6,9 @@ include_directories(${CUDA_INCLUDE_DIRS})
 
 set(FILES
     cuda.cu
-    common.h
+    wukong.h
 )
-add_executable(wukong ${FILES})
+add_library(wukong STATIC ${FILES})
 target_link_libraries(wukong -lcublasLt -lcudnn)
 
 option(CF_TEST "Enable tests" off)

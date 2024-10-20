@@ -1,4 +1,4 @@
-#include "common.h"
+#include "wukong.h"
 
 // cuBLAS workspace. Hardcoding to 32MiB but only Hopper needs 32, for others 4 is OK
 static size_t cublaslt_workspace_size = 32 * 1024 * 1024;
@@ -11,6 +11,7 @@ static int cuda_arch_minor = 0;
 static int cuda_num_SMs = 0; // for persistent threads where we want 1 threadblock per SM
 static int cuda_threads_per_SM = 0;    // needed to calculate how many blocks to launch to fill up the GPU
 
+extern "C" {
 void cuda_init(void)
 {
     srand(0);   // determinism
@@ -161,4 +162,5 @@ void softmax(float* input, float* output, int row, int col)
     cudaFree(d_output);
     cudnnDestroyTensorDescriptor(inputDesc);
     cudnnDestroyTensorDescriptor(outputDesc);
+}
 }
