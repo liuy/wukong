@@ -54,7 +54,7 @@ extern "C" {
 void cuda_init(void);
 void cuda_fini(void);
 void matmul(float *out, const float *inp, const float *weight, const float *bias,
-                   int batch, int row, int column, int oc);
+            int row, int column, int oc);
 void softmax(float* input, float* output, int row, int col);
 }
 

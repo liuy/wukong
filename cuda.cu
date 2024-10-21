@@ -47,17 +47,16 @@ void cuda_fini(void)
 /*
  * Fused matrix multiplication with optional bias addition: out = inp @ weight + bias
  *
- * @param out: output matrix(batch * row, oc)
- * @param inp: input matrix(batch * row, column)
+ * @param out: output matrix(row, oc)
+ * @param inp: input matrix(row, column)
  * @param weight: weight matrix(column, oc)
  * @param bias: optional bias vector(oc) (can be NULL)
- * @param batch: batch size
  * @param row: input row size
  * @param column: input column size
  * @param oc: output column size
  */
 void matmul(float *out, const float *inp, const float *weight, const float *bias,
-            int batch, int row, int column, int oc)
+            int row, int column, int oc)
 {
     int res;
     bool has_bias = (bias != nullptr);
@@ -87,8 +86,8 @@ void matmul(float *out, const float *inp, const float *weight, const float *bias
     cublas_check(cublasLtMatmulDescSetAttribute(desc, CUBLASLT_MATMUL_DESC_BIAS_POINTER, &d_bias, sizeof(bias)));
 
     cublas_check(cublasLtMatrixLayoutCreate(&weight_layout, CUDA_R_32F, oc, column, oc));
-    cublas_check(cublasLtMatrixLayoutCreate(&inp_layout, CUDA_R_32F, column, batch * row, column));
-    cublas_check(cublasLtMatrixLayoutCreate(&out_layout, CUDA_R_32F, oc, batch * row, oc));
+    cublas_check(cublasLtMatrixLayoutCreate(&inp_layout, CUDA_R_32F, column, row, column));
+    cublas_check(cublasLtMatrixLayoutCreate(&out_layout, CUDA_R_32F, oc, row, oc));
     cublas_check(cublasLtMatrixLayoutCreate(&bias_layout, CUDA_R_32F, oc, 1, oc));
 
 
@@ -102,23 +101,23 @@ void matmul(float *out, const float *inp, const float *weight, const float *bias
     cublas_check(cublasLtMatmulAlgoGetHeuristic(cublaslt_handle, desc, weight_layout, inp_layout, out_layout,
                 out_layout, pref, 1, &heuristic, &res));
     if (res == 0)
-        panic("No algorithm found: batch=%d, row=%d, column=%d, oc=%d, has_bias=%d, has_gelu=%d",
-              batch, row, column, oc, has_bias, has_gelu);
+        panic("No algorithm found: row=%d, column=%d, oc=%d, has_bias=%d, has_gelu=%d",
+              row, column, oc, has_bias, has_gelu);
 
     float *d_out;
     float *d_inp;
     float *d_weight;
-    cuda_check(cudaMalloc(&d_out, batch * row * oc * sizeof(float)));
-    cuda_check(cudaMalloc(&d_inp, batch * row * column * sizeof(float)));
+    cuda_check(cudaMalloc(&d_out, row * oc * sizeof(float)));
+    cuda_check(cudaMalloc(&d_inp, row * column * sizeof(float)));
     cuda_check(cudaMalloc(&d_weight, column * oc * sizeof(float)));
-    cuda_check(cudaMemcpy(d_inp, inp, batch * row * column * sizeof(float), cudaMemcpyHostToDevice));
+    cuda_check(cudaMemcpy(d_inp, inp, row * column * sizeof(float), cudaMemcpyHostToDevice));
     cuda_check(cudaMemcpy(d_weight, weight, column * oc * sizeof(float), cudaMemcpyHostToDevice));
 
     const float alpha = 1.0f, beta = 0.0f;
     cublas_check(cublasLtMatmul(cublaslt_handle, desc, &alpha, d_weight, weight_layout, d_inp, inp_layout, &beta,
                 d_out, out_layout, d_out, out_layout, &heuristic.algo, cublaslt_workspace, cublaslt_workspace_size, 0));
 
-    cuda_check(cudaMemcpy(out, d_out, batch * row * oc * sizeof(float), cudaMemcpyDeviceToHost));
+    cuda_check(cudaMemcpy(out, d_out, row * oc * sizeof(float), cudaMemcpyDeviceToHost));
     cuda_check(cudaFree(d_out));
     cuda_check(cudaFree(d_inp));
     cuda_check(cudaFree(d_weight));

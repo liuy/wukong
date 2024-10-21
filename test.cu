@@ -43,9 +43,9 @@ TEST(Cuda, matmul)
                        -0.686453f, 0.457414f, 0.333470f, -1.272253f,
                        -0.298488f, -0.321866f, 0.780953f, -0.490139f,
                        0.202715f, 0.189591f, -0.336381f, 0.134091f};
-    matmul(out, inp, weight, bias, b, r, c, oc);
+    matmul(out, inp, weight, bias, b * r, c, oc);
     assert_array_eq(res, out, b * r * oc);
-    matmul(out, inp, weight, nullptr, b, r, c, oc);
+    matmul(out, inp, weight, nullptr, b * r, c, oc);
     assert_array_eq(res_nob, out, b * r * oc);
 
 }
