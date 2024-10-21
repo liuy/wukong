@@ -6,7 +6,7 @@ package Array
 void cuda_init(void);
 void cuda_fini(void);
 void matmul(float *out, const float *inp, const float *weight, const float *bias,
-			int batch, int row, int column, int oc);
+			int row, int column, int oc);
 void softmax(float* input, float* output, int row, int col);
 */
 import "C"
@@ -28,6 +28,7 @@ type Storage struct {
 
 type Runner interface {
 	Softmax(a *Array) (*Array, error)
+	Matmul(a, b, bias *Array) (*Array, error)
 }
 
 // Array is a multi-dimensional array of any type in a row-major order. It is represented by a Shape in the
@@ -148,9 +149,14 @@ func RandFloatSlice(size int) any {
 	return slice
 }
 
-func CudaSetup()                          { C.cuda_init() }
-func CudaTeardown()                       { C.cuda_fini() }
+func CudaSetup()    { C.cuda_init() }
+func CudaTeardown() { C.cuda_fini() }
+
+// Softmax in a row-wise manner
 func (a *Array) Softmax() (*Array, error) { return a.Runner.Softmax(a) }
+
+// Fused matrix multiplication: a @ b + bias(could be nil).
+func (a *Array) Matmul(b, bias *Array) (*Array, error) { return a.Runner.Matmul(a, b, bias) }
 
 // Run array operations on the CUDA device
 type cudaRunner struct{}
@@ -169,6 +175,41 @@ func (r *cudaRunner) Softmax(a *Array) (*Array, error) {
 			bytes: out,
 			dtype: a.dtype,
 		},
-		a.Runner,
+		&cudaRunner{},
+	}, nil
+}
+
+func (r *cudaRunner) Matmul(a, b, bias *Array) (*Array, error) {
+	// For now we only support b as a 2D array
+	if a.Dims() < 2 || b.Dims() != 2 {
+		return nil, fmt.Errorf("arrays must have at least 2 dimensions")
+	}
+	if a.Shape[len(a.Shape)-1] != b.Shape[len(b.Shape)-2] {
+		return nil, fmt.Errorf("array shapes do not match")
+	}
+	var biasPtr *C.float = nil
+	if bias != nil {
+		biasPtr = (*C.float)(unsafe.Pointer(&bias.bytes[0]))
+		if bias.Size() != b.Shape[len(b.Shape)-1] {
+			return nil, fmt.Errorf("bias shape does not match")
+		}
+	}
+	column := a.Shape[len(a.Shape)-1]
+	row := a.Size() / column
+	oc := b.Shape[len(b.Shape)-1]
+	out := make([]byte, row*oc*int(a.dtype.Size()))
+
+	C.matmul((*C.float)(unsafe.Pointer(&out[0])), (*C.float)(unsafe.Pointer(&a.bytes[0])),
+		(*C.float)(unsafe.Pointer(&b.bytes[0])), biasPtr, C.int(row), C.int(column), C.int(oc))
+
+	shape := a.Shape
+	shape[len(shape)-1] = oc
+	return &Array{
+		shape,
+		Storage{
+			bytes: out,
+			dtype: a.dtype,
+		},
+		&cudaRunner{},
 	}, nil
 }

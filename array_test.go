@@ -122,3 +122,66 @@ func equal(a *Array, expected []float32) bool {
 	}
 	return true
 }
+
+func TestArrayMatmul(t *testing.T) {
+	CudaSetup()
+	defer CudaTeardown()
+
+	tests := []struct {
+		a, b, bias                       Shape
+		aData, bData, biasData, expected []float32
+		expectError                      bool
+	}{
+		{
+			a: Shape{2, 3}, b: Shape{3, 2}, bias: Shape{2},
+			aData: []float32{1, 2, 3, 4, 5, 6}, bData: []float32{7, 8, 9, 10, 11, 12}, biasData: []float32{1, 1},
+			expected: []float32{59, 65, 140, 155}, expectError: false,
+		},
+		{
+			a: Shape{2, 3}, b: Shape{3, 2}, bias: Shape{},
+			aData: []float32{1, 2, 3, 4, 5, 6}, bData: []float32{7, 8, 9, 10, 11, 12}, biasData: nil,
+			expected: []float32{58, 64, 139, 154}, expectError: false,
+		},
+		{
+			a: Shape{2, 2, 3}, b: Shape{3, 2}, bias: Shape{2},
+			aData: []float32{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12}, bData: []float32{13, 14, 15, 16, 17, 18}, biasData: []float32{1, 1},
+			expected: []float32{95, 101, 230, 245, 365, 389, 500, 533}, expectError: false,
+		},
+		{
+			a: Shape{2, 3}, b: Shape{2, 2}, bias: Shape{},
+			aData: []float32{1, 2, 3, 4, 5, 6}, bData: []float32{7, 8, 9, 10}, biasData: nil,
+			expected: nil, expectError: true,
+		},
+	}
+
+	for _, tt := range tests {
+		a, err := MakeArrayFrom(tt.a, tt.aData)
+		if err != nil {
+			t.Fatalf("MakeArrayFrom(%v, %v) failed: %v", tt.a, tt.aData, err)
+		}
+		b, err := MakeArrayFrom(tt.b, tt.bData)
+		if err != nil {
+			t.Fatalf("MakeArrayFrom(%v, %v) failed: %v", tt.b, tt.bData, err)
+		}
+		var bias *Array
+		if tt.biasData != nil {
+			bias, err = MakeArrayFrom(tt.bias, tt.biasData)
+			if err != nil {
+				t.Fatalf("MakeArrayFrom(%v, %v) failed: %v", tt.bias, tt.biasData, err)
+			}
+		}
+
+		result, err := a.Matmul(b, bias)
+		if (err != nil) != tt.expectError {
+			t.Errorf("Array.Matmul() error = %v, expectError %v", err, tt.expectError)
+			continue
+		}
+		if err != nil {
+			continue
+		}
+
+		if !equal(result, tt.expected) {
+			t.Errorf("Array.Matmul() = %v, want %v", result, tt.expected)
+		}
+	}
+}
