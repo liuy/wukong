@@ -34,15 +34,34 @@ func TestShapeIsScalar(t *testing.T) {
 }
 
 func TestArrayFormat(t *testing.T) {
-	Array, err := MakeArrayFrom(Shape{2, 2, 3}, []int8{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12})
-	if err != nil {
-		t.Fatalf("MakeArrayFrom() error = %v", err)
+	tests := []struct {
+		shape    Shape
+		data     any
+		expected string
+	}{
+		{
+			Shape{2, 2, 3},
+			[]int16{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12},
+			"Shape: (2, 2, 3)\nType: []int16\nData:\n 1 2 3\n 4 5 6\n\n 7 8 9\n 10 11 12\n",
+		},
+		{
+			Shape{2, 3},
+			[]float32{1.1, 2.2, 3.3, 4.4, 5.5, 6.6},
+			"Shape: (2, 3)\nType: []float32\nData:\n 1.1 2.2 3.3\n 4.4 5.5 6.6\n",
+		},
 	}
-	expected := "Shape: (2, 2, 3)\nType: int8\nData:\n 1 2 3\n 4 5 6\n\n 7 8 9\n 10 11 12\n"
-	result := fmt.Sprintf("%v", Array)
-	if result != expected {
-		t.Errorf("Array.Format() = \n%v\nWant \n%v", result, expected)
+
+	for _, tt := range tests {
+		a, err := MakeArrayFrom(tt.shape, tt.data)
+		if err != nil {
+			t.Fatalf("MakeArrayFrom() error = %v", err)
+		}
+		result := fmt.Sprintf("%v", a)
+		if result != tt.expected {
+			t.Errorf("Array.Format() = \n%v\nWant \n%v", result, tt.expected)
+		}
 	}
+	// runtime.GC() // test if finalizer is called
 }
 
 func TestShapeFormat(t *testing.T) {
@@ -115,8 +134,9 @@ func equal(a *Array, expected []float32) bool {
 		return false
 	}
 
+	d := a.ToHost()
 	for i, v := range expected {
-		if math.Abs(float64(a.GetElem(i).(float32)-v)) > 1e-6 {
+		if math.Abs(d.Index(i).Float()-float64(v)) > 1e-6 {
 			return false
 		}
 	}
@@ -179,7 +199,6 @@ func TestArrayMatmul(t *testing.T) {
 		if err != nil {
 			continue
 		}
-
 		if !equal(result, tt.expected) {
 			t.Errorf("Array.Matmul() = %v, want %v", result, tt.expected)
 		}

@@ -53,9 +53,13 @@ static inline void _printm(const char *name, float* matrix, int batch, int row, 
 extern "C" {
 void cuda_init(void);
 void cuda_fini(void);
-void matmul(float *out, const float *inp, const float *weight, const float *bias,
+void cuda_to_host(void* dst, void* src, size_t size);
+void cuda_to_device(void* dst, void* src, size_t size);
+void* cuda_malloc(size_t size);
+void cuda_free(void* ptr);
+void cuda_matmul(void *out, const void *inp, const void *weight, const void *bias,
             int row, int column, int oc);
-void softmax(float* input, float* output, int row, int col);
+void cuda_softmax(void* output, void* intput, int row, int col);
 }
 
 #endif

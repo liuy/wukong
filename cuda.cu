@@ -44,6 +44,29 @@ void cuda_fini(void)
     cudnn_check(cudnnDestroy(cudnn_handle));
 }
 
+
+void* cuda_malloc(size_t size)
+{
+    void *ptr;
+    cuda_check(cudaMalloc(&ptr, size));
+    return ptr;
+}
+
+void cuda_free(void* ptr)
+{
+    cuda_check(cudaFree(ptr));
+}
+
+void cuda_to_device(void* dst, void* src, size_t size)
+{
+    cuda_check(cudaMemcpy(dst, src, size, cudaMemcpyHostToDevice));
+}
+
+void cuda_to_host(void* dst, void* src, size_t size)
+{
+    cuda_check(cudaMemcpy(dst, src, size, cudaMemcpyDeviceToHost));
+}
+
 /*
  * Fused matrix multiplication with optional bias addition: out = inp @ weight + bias
  *
@@ -55,7 +78,7 @@ void cuda_fini(void)
  * @param column: input column size
  * @param oc: output column size
  */
-void matmul(float *out, const float *inp, const float *weight, const float *bias,
+void cuda_matmul(void *out, const void *inp, const void *weight, const void *bias,
             int row, int column, int oc)
 {
     int res;
@@ -78,12 +101,7 @@ void matmul(float *out, const float *inp, const float *weight, const float *bias
     cublas_check(cublasLtMatmulDescSetAttribute(desc, CUBLASLT_MATMUL_DESC_TRANSB, &notrans, sizeof(notrans)));
     cublas_check(cublasLtMatmulDescSetAttribute(desc, CUBLASLT_MATMUL_DESC_EPILOGUE, &epilogue, sizeof(epilogue)));
 
-    float *d_bias = nullptr;
-    if (has_bias) {
-        cuda_check(cudaMalloc(&d_bias, oc * sizeof(float)));
-        cuda_check(cudaMemcpy(d_bias, bias, oc * sizeof(float), cudaMemcpyHostToDevice));
-    }
-    cublas_check(cublasLtMatmulDescSetAttribute(desc, CUBLASLT_MATMUL_DESC_BIAS_POINTER, &d_bias, sizeof(bias)));
+    cublas_check(cublasLtMatmulDescSetAttribute(desc, CUBLASLT_MATMUL_DESC_BIAS_POINTER, &bias, sizeof(bias)));
 
     cublas_check(cublasLtMatrixLayoutCreate(&weight_layout, CUDA_R_32F, oc, column, oc));
     cublas_check(cublasLtMatrixLayoutCreate(&inp_layout, CUDA_R_32F, column, row, column));
@@ -104,24 +122,9 @@ void matmul(float *out, const float *inp, const float *weight, const float *bias
         panic("No algorithm found: row=%d, column=%d, oc=%d, has_bias=%d, has_gelu=%d",
               row, column, oc, has_bias, has_gelu);
 
-    float *d_out;
-    float *d_inp;
-    float *d_weight;
-    cuda_check(cudaMalloc(&d_out, row * oc * sizeof(float)));
-    cuda_check(cudaMalloc(&d_inp, row * column * sizeof(float)));
-    cuda_check(cudaMalloc(&d_weight, column * oc * sizeof(float)));
-    cuda_check(cudaMemcpy(d_inp, inp, row * column * sizeof(float), cudaMemcpyHostToDevice));
-    cuda_check(cudaMemcpy(d_weight, weight, column * oc * sizeof(float), cudaMemcpyHostToDevice));
-
     const float alpha = 1.0f, beta = 0.0f;
-    cublas_check(cublasLtMatmul(cublaslt_handle, desc, &alpha, d_weight, weight_layout, d_inp, inp_layout, &beta,
-                d_out, out_layout, d_out, out_layout, &heuristic.algo, cublaslt_workspace, cublaslt_workspace_size, 0));
-
-    cuda_check(cudaMemcpy(out, d_out, row * oc * sizeof(float), cudaMemcpyDeviceToHost));
-    cuda_check(cudaFree(d_out));
-    cuda_check(cudaFree(d_inp));
-    cuda_check(cudaFree(d_weight));
-    cuda_check(cudaFree(d_bias));
+    cublas_check(cublasLtMatmul(cublaslt_handle, desc, &alpha, weight, weight_layout, inp, inp_layout, &beta,
+                out, out_layout, out, out_layout, &heuristic.algo, cublaslt_workspace, cublaslt_workspace_size, 0));
 
     cublas_check(cublasLtMatmulPreferenceDestroy(pref));
     cublas_check(cublasLtMatmulDescDestroy(desc));
@@ -132,13 +135,13 @@ void matmul(float *out, const float *inp, const float *weight, const float *bias
 }
 
 /*
- * Row-wise softmax
- * @param input: shape (row, column)
+ * Row-wise cuda_softmax
  * @param output: shape (row, column)
+ * @param input: shape (row, column)
  * @param row: row size
  * @param col: column size
  */
-void softmax(float* input, float* output, int row, int col)
+void cuda_softmax(void* output, void* input, int row, int col)
 {
     cudnnTensorDescriptor_t inputDesc, outputDesc;
     cudnn_check(cudnnCreateTensorDescriptor(&inputDesc));
@@ -147,18 +150,10 @@ void softmax(float* input, float* output, int row, int col)
     cudnn_check(cudnnSetTensor4dDescriptor(inputDesc, CUDNN_TENSOR_NCHW, CUDNN_DATA_FLOAT, row, col, 1, 1));
     cudnn_check(cudnnSetTensor4dDescriptor(outputDesc, CUDNN_TENSOR_NCHW, CUDNN_DATA_FLOAT, row, col, 1, 1));
 
-    float *d_input, *d_output;
-    cuda_check(cudaMalloc(&d_input, row*col*sizeof(float)));
-    cuda_check(cudaMalloc(&d_output, row*col*sizeof(float)));
-    cuda_check(cudaMemcpy(d_input, input, row*col*sizeof(float), cudaMemcpyHostToDevice));
-
     float alpha = 1.0f, beta = 0.0f;
     cudnn_check(cudnnSoftmaxForward(cudnn_handle, CUDNN_SOFTMAX_ACCURATE, CUDNN_SOFTMAX_MODE_CHANNEL, &alpha,
-                                    inputDesc, d_input, &beta, outputDesc, d_output));
-    cuda_check(cudaMemcpy(output, d_output, row*col*sizeof(float), cudaMemcpyDeviceToHost));
+                                    inputDesc, input, &beta, outputDesc, output));
 
-    cudaFree(d_input);
-    cudaFree(d_output);
     cudnnDestroyTensorDescriptor(inputDesc);
     cudnnDestroyTensorDescriptor(outputDesc);
 }

@@ -19,7 +19,7 @@ int main(int argc, char* argv[]) {
     return RUN_ALL_TESTS();
 }
 
-TEST(Cuda, matmul)
+TEST(Cuda, cuda_matmul)
 {
     int b = 2;
     int r = 2;
@@ -43,19 +43,39 @@ TEST(Cuda, matmul)
                        -0.686453f, 0.457414f, 0.333470f, -1.272253f,
                        -0.298488f, -0.321866f, 0.780953f, -0.490139f,
                        0.202715f, 0.189591f, -0.336381f, 0.134091f};
-    matmul(out, inp, weight, bias, b * r, c, oc);
+    void *d_out = cuda_malloc(b * r * oc * sizeof(float));
+    void *d_inp = cuda_malloc(b * r * c * sizeof(float));
+    void *d_weight = cuda_malloc(c * oc * sizeof(float));
+    void *d_bias = cuda_malloc(oc * sizeof(float));
+    cuda_to_device(d_inp, inp, b * r * c * sizeof(float));
+    cuda_to_device(d_weight, weight, c * oc * sizeof(float));
+    cuda_to_device(d_bias, bias, oc * sizeof(float));
+
+    cuda_matmul(d_out, d_inp, d_weight, d_bias, b * r, c, oc);
+    cuda_to_host(out, d_out, b * r * oc * sizeof(float));
     assert_array_eq(res, out, b * r * oc);
-    matmul(out, inp, weight, nullptr, b * r, c, oc);
+    cuda_matmul(d_out, d_inp, d_weight, nullptr, b * r, c, oc);
+    cuda_to_host(out, d_out, b * r * oc * sizeof(float));
     assert_array_eq(res_nob, out, b * r * oc);
 
+    cuda_free(d_out);
+    cuda_free(d_inp);
+    cuda_free(d_weight);
+    cuda_free(d_bias);
 }
 
-TEST(Cuda, softmax)
+TEST(Cuda, cuda_softmax)
 {
     float inp[2 * 3] = {2.0f, 2.0f, 2.0f, 4.0f, 1000.0f, 1.0f};
     float out[2 * 3] = {0};
     float res[] = {0.333333f, 0.333333f, 0.333333f, 0.000000f, 1.000000f, 0.000000f};
 
-    softmax(inp, out, 2, 3);
+    void *d_out = cuda_malloc(2 * 3 * sizeof(float));
+    void *d_inp = cuda_malloc(2 * 3 * sizeof(float));
+    cuda_to_device(d_inp, inp, 2 * 3 * sizeof(float));
+    cuda_softmax(d_out, d_inp, 2, 3);
+    cuda_to_host(out, d_out, 2 * 3 * sizeof(float));
     assert_array_eq(res, out, 6);
+    cuda_free(d_out);
+    cuda_free(d_inp);
 }
