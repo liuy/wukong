@@ -137,6 +137,7 @@ func equal(a *Array, expected []float32) bool {
 	d := a.ToHost()
 	for i, v := range expected {
 		if math.Abs(d.Index(i).Float()-float64(v)) > 1e-6 {
+			fmt.Printf("i: %d, v: %f, expected: %f\n", i, d.Index(i).Float(), v)
 			return false
 		}
 	}
@@ -202,5 +203,31 @@ func TestArrayMatmul(t *testing.T) {
 		if !equal(result, tt.expected) {
 			t.Errorf("Array.Matmul() = %v, want %v", result, tt.expected)
 		}
+	}
+}
+
+func TestArrayMatmulSoftmax(t *testing.T) {
+	CudaSetup()
+	defer CudaTeardown()
+
+	a, err := MakeArrayFrom(Shape{2, 3}, []float32{1, 2, 3, 4, 5, 6})
+	if err != nil {
+		t.Fatalf("MakeArrayFrom() error = %v", err)
+	}
+	b, err := MakeArrayFrom(Shape{3, 3}, []float32{1, 2, 3, 4, 5, 6, 7, 8, 9})
+	if err != nil {
+		t.Fatalf("MakeArrayFrom() error = %v", err)
+	}
+	c, err := a.Matmul(b, nil)
+	if err != nil {
+		t.Fatalf("Array.Matmul() error = %v", err)
+	}
+	d, err := c.Softmax()
+	if err != nil {
+		t.Fatalf("Array.Softmax() error = %v", err)
+	}
+	expected := []float32{6.1289825e-06, 0.0024726081, 0.9975212, 9.3576195e-14, 3.059022e-07, 0.99999964}
+	if !equal(d, expected) {
+		t.Errorf("Array.Matmul().Softmax():\n%v, want \n%v", d, expected)
 	}
 }
