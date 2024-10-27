@@ -109,12 +109,9 @@ func MakeArrayFrom(s Shape, data any) (ret *Array, e error) {
 		}
 		return nil, fmt.Errorf("data length does not match Shape (file: %s, line: %d)", file, line)
 	}
-
 	t := v.Type()
 	ret = NewArray(s, t)
-
 	ret.ToDevice(unsafe.Pointer(v.Pointer()))
-
 	return ret, nil
 }
 
@@ -199,14 +196,9 @@ func (r *cudaRunner) Softmax(a *Array) (*Array, error) {
 	row := a.Size() / col
 	out := C.cuda_malloc(C.size_t(row * col * int(a.dtype.Size())))
 	C.cuda_softmax(out, a.dptr, C.int(row), C.int(col))
-	return &Array{
-		a.Shape,
-		Storage{
-			dptr:  out,
-			dtype: a.dtype,
-		},
-		&cudaRunner{},
-	}, nil
+	ret := NewArray(a.Shape, a.dtype)
+	ret.dptr = out
+	return ret, nil
 }
 
 func (r *cudaRunner) Matmul(a, b, bias *Array) (*Array, error) {
@@ -233,12 +225,7 @@ func (r *cudaRunner) Matmul(a, b, bias *Array) (*Array, error) {
 
 	shape := a.Shape
 	shape[len(shape)-1] = oc
-	return &Array{
-		shape,
-		Storage{
-			dptr:  out,
-			dtype: a.dtype,
-		},
-		&cudaRunner{},
-	}, nil
+	ret := NewArray(shape, a.dtype)
+	ret.dptr = out
+	return ret, nil
 }
