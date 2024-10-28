@@ -115,7 +115,7 @@ func MakeArrayFrom(s Shape, data any) (ret *Array, e error) {
 }
 
 func (t *Array) Format(st fmt.State, r rune) {
-	s := fmt.Sprintf("Shape: %v\nType: %v", t.Shape, t.dtype)
+	s := fmt.Sprintf("Shape: %v\nType: %v", t.Shape, t.ElemType())
 	data := "\nData:\n"
 	dims := t.Shape
 	stride := dims[len(dims)-1]
@@ -145,7 +145,10 @@ func RandFloatSlice(size int) any {
 func CudaSetup()    { C.cuda_init() }
 func CudaTeardown() { C.cuda_fini() }
 
-// Returns the size of the element in bytes
+// Returns the element type of the Array
+func (a *Array) ElemType() reflect.Type { return a.dtype.Elem() }
+
+// Returns the element size of the Array in bytes
 func (a *Array) ElemSize() int { return int(a.dtype.Elem().Size()) }
 
 // Returns the total size of the Array in bytes

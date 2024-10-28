@@ -83,12 +83,12 @@ func TestArrayFormat(t *testing.T) {
 		{
 			Shape{2, 2, 3},
 			[]int16{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12},
-			"Shape: (2, 2, 3)\nType: []int16\nData:\n 1 2 3\n 4 5 6\n\n 7 8 9\n 10 11 12\n",
+			"Shape: (2, 2, 3)\nType: int16\nData:\n 1 2 3\n 4 5 6\n\n 7 8 9\n 10 11 12\n",
 		},
 		{
 			Shape{2, 3},
 			[]float32{1.1, 2.2, 3.3, 4.4, 5.5, 6.6},
-			"Shape: (2, 3)\nType: []float32\nData:\n 1.1 2.2 3.3\n 4.4 5.5 6.6\n",
+			"Shape: (2, 3)\nType: float32\nData:\n 1.1 2.2 3.3\n 4.4 5.5 6.6\n",
 		},
 	}
 
