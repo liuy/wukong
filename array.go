@@ -109,19 +109,16 @@ func MakeArrayFrom(s Shape, data any) (ret *Array, e error) {
 		}
 		return nil, fmt.Errorf("data length does not match Shape (file: %s, line: %d)", file, line)
 	}
-	t := v.Type()
-	ret = NewArray(s, t)
+	ret = NewArray(s, v.Type())
 	ret.ToDevice(unsafe.Pointer(v.Pointer()))
 	return ret, nil
 }
 
 func (t *Array) Format(st fmt.State, r rune) {
 	s := fmt.Sprintf("Shape: %v\nType: %v", t.Shape, t.dtype)
-
 	data := "\nData:\n"
 	dims := t.Shape
 	stride := dims[len(dims)-1]
-
 	d := t.ToHost()
 	for i := 0; i < t.Size(); i++ {
 		if i > 0 && i%stride == 0 {
@@ -133,7 +130,6 @@ func (t *Array) Format(st fmt.State, r rune) {
 		data += fmt.Sprintf(" %v", d.Index(i))
 	}
 	data += "\n"
-
 	fmt.Fprintf(st, "%s%s", s, data)
 }
 
@@ -220,9 +216,7 @@ func (r *cudaRunner) Matmul(a, b, bias *Array) (*Array, error) {
 	row := a.Size() / column
 	oc := b.Shape[len(b.Shape)-1]
 	out := C.cuda_malloc(C.size_t(row * oc * int(a.dtype.Size())))
-
 	C.cuda_matmul(out, a.dptr, b.dptr, biasPtr, C.int(row), C.int(column), C.int(oc))
-
 	shape := a.Shape
 	shape[len(shape)-1] = oc
 	ret := NewArray(shape, a.dtype)
