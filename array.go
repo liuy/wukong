@@ -59,8 +59,8 @@ func product(a []int) (ret int) {
 	return
 }
 
-// Returns the number of elements expected in a Array of a certain Shape
-func (s Shape) Size() int {
+// Returns the number of elements expected in the Array
+func (s Shape) Len() int {
 	return product([]int(s))
 }
 
@@ -102,7 +102,7 @@ func NewArray(s Shape, t reflect.Type) *Array {
 // For e.g, MakeArrayFrom(Shape{2, 3}, []float32{1, 2, 3, 4, 5, 6}) creates a 2D Array of float32
 func MakeArrayFrom(s Shape, data any) (ret *Array, e error) {
 	v := reflect.ValueOf(data)
-	if v.Len() != s.Size() {
+	if v.Len() != s.Len() {
 		_, file, line, ok := runtime.Caller(1)
 		if !ok {
 			return nil, fmt.Errorf("data length does not match Shape")
@@ -120,7 +120,7 @@ func (t *Array) Format(st fmt.State, r rune) {
 	dims := t.Shape
 	stride := dims[len(dims)-1]
 	d := t.ToHost()
-	for i := 0; i < t.Size(); i++ {
+	for i := 0; i < t.Len(); i++ {
 		if i > 0 && i%stride == 0 {
 			data += "\n"
 			if i%(stride*dims[len(dims)-2]) == 0 {
@@ -145,6 +145,12 @@ func RandFloatSlice(size int) any {
 func CudaSetup()    { C.cuda_init() }
 func CudaTeardown() { C.cuda_fini() }
 
+// Returns the size of the element in bytes
+func (a *Array) ElemSize() int { return int(a.dtype.Elem().Size()) }
+
+// Returns the total size of the Array in bytes
+func (a *Array) Size() int { return a.Len() * a.ElemSize() }
+
 // Softmax in a row-wise manner
 func (a *Array) Softmax() (*Array, error) { return a.Runner.Softmax(a) }
 
@@ -165,14 +171,14 @@ type cudaRunner struct{}
 
 func (r *cudaRunner) ToDevice(a *Array, src unsafe.Pointer) {
 	if a.dptr == nil {
-		a.dptr = C.cuda_malloc(C.size_t(a.Size() * int(a.dtype.Size())))
+		a.dptr = C.cuda_malloc(C.size_t(a.Size()))
 	}
-	C.cuda_to_device(a.dptr, src, C.size_t(a.Size()*int(a.dtype.Size())))
+	C.cuda_to_device(a.dptr, src, C.size_t(a.Size()))
 }
 
 func (r *cudaRunner) ToHost(a *Array) reflect.Value {
-	dst := reflect.MakeSlice(a.dtype, a.Size(), a.Size())
-	C.cuda_to_host(unsafe.Pointer(dst.Pointer()), a.dptr, C.size_t(a.Size()*int(a.dtype.Size())))
+	dst := reflect.MakeSlice(a.dtype, a.Len(), a.Len())
+	C.cuda_to_host(unsafe.Pointer(dst.Pointer()), a.dptr, C.size_t(a.Size()))
 	return dst
 }
 
@@ -189,8 +195,8 @@ func (r *cudaRunner) Softmax(a *Array) (*Array, error) {
 		return nil, fmt.Errorf("Array must have at least 2 dimensions")
 	}
 	col := a.Shape[len(a.Shape)-1]
-	row := a.Size() / col
-	out := C.cuda_malloc(C.size_t(row * col * int(a.dtype.Size())))
+	row := a.Len() / col
+	out := C.cuda_malloc(C.size_t(row * col * a.ElemSize()))
 	C.cuda_softmax(out, a.dptr, C.int(row), C.int(col))
 	ret := NewArray(a.Shape, a.dtype)
 	ret.dptr = out
@@ -208,14 +214,14 @@ func (r *cudaRunner) Matmul(a, b, bias *Array) (*Array, error) {
 	var biasPtr unsafe.Pointer = nil
 	if bias != nil {
 		biasPtr = bias.dptr
-		if bias.Size() != b.Shape[len(b.Shape)-1] {
+		if bias.Len() != b.Shape[len(b.Shape)-1] {
 			return nil, fmt.Errorf("bias shape does not match")
 		}
 	}
 	column := a.Shape[len(a.Shape)-1]
-	row := a.Size() / column
+	row := a.Len() / column
 	oc := b.Shape[len(b.Shape)-1]
-	out := C.cuda_malloc(C.size_t(row * oc * int(a.dtype.Size())))
+	out := C.cuda_malloc(C.size_t(row * oc * a.ElemSize()))
 	C.cuda_matmul(out, a.dptr, b.dptr, biasPtr, C.int(row), C.int(column), C.int(oc))
 	shape := a.Shape
 	shape[len(shape)-1] = oc

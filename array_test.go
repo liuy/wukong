@@ -6,14 +6,55 @@ import (
 	"testing"
 )
 
-func TestShapeSize(t *testing.T) {
+func TestShapeLen(t *testing.T) {
 	s := Shape{2, 3, 4}
 	expected := 24
-	if s.Size() != expected {
-		t.Errorf("Shape.size() = %d, want %d", s.Size(), expected)
+	if s.Len() != expected {
+		t.Errorf("Shape.Len() = %d, want %d", s.Len(), expected)
 	}
 }
 
+func TestArrayElemSize(t *testing.T) {
+	tests := []struct {
+		shape    Shape
+		data     any
+		expected int
+	}{
+		{Shape{2, 3}, []float32{1, 2, 3, 4, 5, 6}, 4},
+		{Shape{2, 3}, []int8{1, 2, 3, 4, 5, 6}, 1},
+	}
+
+	for _, tt := range tests {
+		a, err := MakeArrayFrom(tt.shape, tt.data)
+		if err != nil {
+			t.Fatalf("MakeArrayFrom() error = %v", err)
+		}
+		if a.ElemSize() != tt.expected {
+			t.Errorf("Array.ElemSize() = %d, want %d", a.ElemSize(), tt.expected)
+		}
+	}
+}
+
+func TestArraySize(t *testing.T) {
+	tests := []struct {
+		shape    Shape
+		data     any
+		expected int
+	}{
+		{Shape{2, 3}, []float32{1, 2, 3, 4, 5, 6}, 24},
+		{Shape{2, 3}, []int16{1, 2, 3, 4, 5, 6}, 12},
+	}
+
+	for _, tt := range tests {
+		a, err := MakeArrayFrom(tt.shape, tt.data)
+		if err != nil {
+			t.Fatalf("MakeArrayFrom() error = %v", err)
+		}
+		if a.Size() != tt.expected {
+			t.Errorf("Array.Size() = %d, want %d", a.Size(), tt.expected)
+		}
+	}
+}
 func TestShapeDims(t *testing.T) {
 	s := Shape{2, 3, 4}
 	expected := 3
@@ -124,13 +165,13 @@ func TestArraySoftmax(t *testing.T) {
 			t.Fatalf("Array.Softmax() failed: %v", err)
 		}
 		if !equal(res, tt.expected) {
-			t.Errorf("Array.Softmax() = %v, want %v", res, tt.expected)
+			t.Errorf("Array.Softmax() =\n%v, want\n%v", res, tt.expected)
 		}
 	}
 }
 
 func equal(a *Array, expected []float32) bool {
-	if a.Size() != len(expected) {
+	if a.Len() != len(expected) {
 		return false
 	}
 
