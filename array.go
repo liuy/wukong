@@ -1,7 +1,7 @@
 package Array
 
 /*
-#cgo LDFLAGS: ./build/libwukong.a -L/usr/local/cuda/lib64 -lcudnn -lcublasLt -lcudart
+#cgo LDFLAGS: ./build/libwukong.a -L/usr/local/cuda/lib64 -lcudnn -lcublasLt -lcudart -lm -lcublas
 
 void cuda_init(void);
 void cuda_fini(void);

@@ -5,7 +5,31 @@
 #include <stdlib.h>
 #include <cuda_runtime.h>
 #include <cublasLt.h>
+#include <cublas_v2.h>
 #include <cudnn.h>
+#include <float.h>
+#include <cuda_bf16.h>
+#include <cooperative_groups.h>
+#include <cooperative_groups/reduce.h>
+
+// ----------------------------------------------------------------------------
+// reduced/mixed precision utilities
+
+#if defined(ENABLE_BF16)
+    typedef __nv_bfloat16 floatX;
+    typedef __nv_bfloat16 floatN;
+    #define CUBLAS_LOWP CUDA_R_16BF // CUDA_R_16F or CUDA_R_16BF (or CUDA_R_32F)
+// CUBLAS_COMPUTE_32F or CUBLAS_COMPUTE_16F (for CUDA_R_16F only, potentially slower?!)
+    #define CUBLAS_LOWP_COMPUTE CUBLAS_COMPUTE_16F
+#elif defined(ENABLE_FP16)
+    typedef half floatX;
+    typedef half floatN;
+#else
+    #define CUBLAS_LOWP CUDA_R_32F // CUDA_R_16F or CUDA_R_16BF (or CUDA_R_32F)
+    #define CUBLAS_LOWP_COMPUTE CUBLAS_COMPUTE_32F
+    typedef float floatX;
+    typedef float floatN;
+#endif
 
 #define panic(fmt, ...) do { \
     fprintf(stderr, "%s:%d:%s(): " fmt "\n", __FILE__, __LINE__, __func__, ##__VA_ARGS__); \
@@ -23,6 +47,9 @@
 #define cudnn_check(status) do { \
     if (status != CUDNN_STATUS_SUCCESS) panic("CUDNN error: %s\n", cudnnGetErrorString(status)); \
 } while (0)
+
+// convenience macro for calculating grid/block dimensions for kernels
+#define CEIL_DIV(M, N) (((M) + (N)-1) / (N))
 
 static inline float* malloc_rand_float(size_t N)
 {
@@ -60,6 +87,7 @@ void cuda_free(void* ptr);
 void cuda_matmul(void *out, const void *inp, const void *weight, const void *bias,
             int row, int column, int oc);
 void cuda_softmax(void* output, void* intput, int row, int col);
+void cuda_flash_attention(void *out, const void *inp, int batch, int row, int NH, int HS);
 }
 
 #endif

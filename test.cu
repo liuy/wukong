@@ -79,3 +79,48 @@ TEST(Cuda, cuda_softmax)
     cuda_free(d_out);
     cuda_free(d_inp);
 }
+
+TEST(Cuda, cuda_flash_attention)
+{
+    int batch = 2;
+    int row = 4;
+    int NH = 1;
+    int HS = 2;
+    int col = NH * HS;
+
+    float inp[batch * row * col * 3] = {
+        0.1f, 0.2f, 0.3f, 0.4f, 0.5f, 0.6f, // Batch1
+        0.7f, 0.8f, 0.9f, 1.0f, 1.1f, 1.2f,
+        1.3f, 1.4f, 1.5f, 1.6f, 1.7f, 1.8f,
+        1.9f, 2.0f, 2.1f, 2.2f, 2.3f, 2.4f,
+        0.1f, 0.2f, 0.3f, 0.4f, 0.5f, 0.6f, // Batch2
+        0.7f, 0.8f, 0.9f, 1.0f, 1.1f, 1.2f,
+        1.3f, 1.4f, 1.5f, 1.6f, 1.7f, 1.8f,
+        1.9f, 2.0f, 2.1f, 2.2f, 2.3f, 2.4f,
+    };
+
+    float out[batch * row * col] = {0};
+    float res[batch * row * col] = {
+        0.500000f, 0.600000f,
+        0.892363f, 0.992363f,
+        1.479998f, 1.579998f,
+        2.161403f, 2.261404f,
+        0.500000f, 0.600000f,
+        0.892363f, 0.992363f,
+        1.479998f, 1.579998f,
+        2.161403f, 2.261404f,
+    };
+
+    void *d_out = cuda_malloc(batch * row * col * sizeof(float));
+    void *d_inp = cuda_malloc(batch * row * col * 3 * sizeof(float));
+    cuda_to_device(d_inp, inp, batch * row * col * 3 * sizeof(float));
+
+    cuda_flash_attention(d_out, d_inp, batch, row, NH, HS);
+    cuda_to_host(out, d_out, batch * row * col * sizeof(float));
+    assert_array_eq(res, out, batch * row * col);
+    // printm(out, batch, row, col);
+
+    cuda_free(d_out);
+    cuda_free(d_inp);
+}
+
