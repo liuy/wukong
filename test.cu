@@ -115,7 +115,7 @@ TEST(Cuda, cuda_flash_attention)
     void *d_inp = cuda_malloc(batch * row * col * 3 * sizeof(float));
     cuda_to_device(d_inp, inp, batch * row * col * 3 * sizeof(float));
 
-    cuda_flash_attention(d_out, d_inp, batch, row, NH, HS);
+    cuda_mha_attention(d_out, d_inp, batch, row, NH, HS);
     cuda_to_host(out, d_out, batch * row * col * sizeof(float));
     assert_array_eq(res, out, batch * row * col);
     // printm(out, batch, row, col);

@@ -87,7 +87,7 @@ void cuda_free(void* ptr);
 void cuda_matmul(void *out, const void *inp, const void *weight, const void *bias,
             int row, int column, int oc);
 void cuda_softmax(void* output, void* intput, int row, int col);
-void cuda_flash_attention(void *out, const void *inp, int batch, int row, int NH, int HS);
+void cuda_mha_attention(void *out, const void *inp, int batch, int row, int NH, int HS);
 void cuda_gqa_attention(void *out, const void *inp, int batch, int row, int qNH, int kvNH, int HS);
 }
 

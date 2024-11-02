@@ -114,37 +114,7 @@ __global__ void scaled_softmax_kernel(float* out, const float* inp, int B, int N
     }
 }
 
-__global__ void permute_kernel(float* q, float* k, float* v,
-                                const float* inp,
-                                int B, int N, int NH, int d)
-{
-    // okay so now, this kernel wants Q,K,V to all be of shape (B, NH, N, d)
-    // but instead, we have a single tensor QKV (inp) of shape (B, N, 3, NH, d)
-    int idx = blockIdx.x * blockDim.x + threadIdx.x;
-
-    // Q[b][nh_][n][d_] = inp[b][n][0][nh_][d_]
-    if (idx < B * NH * N * d) {
-        int b = idx / (NH * N * d);
-        int rest = idx % (NH * N * d);
-        int nh_ = rest / (N * d);
-        rest = rest % (N * d);
-        int n = rest / d;
-        int d_ = rest % d;
-
-        int inp_idx = \
-            (b * N * 3 * NH * d)
-            +   (n * 3 * NH * d)
-            +       (0 * NH * d)
-            +          (nh_ * d)
-            +                d_;
-
-        q[idx] = inp[inp_idx];
-        k[idx] = inp[inp_idx + NH * d];
-        v[idx] = inp[inp_idx + 2 * (NH * d)];
-    }
-}
-
-__global__ void unpermute_kernel(const float* inp, float *out, int B, int N, int NH, int d)
+__global__ void gqa_unpermute_kernel(const float* inp, float *out, int B, int N, int NH, int d)
 {
    // out has shape (B, nh, N, d) but we need to unpermute it to (B, N, nh, d)
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
@@ -355,7 +325,7 @@ void cuda_softmax(void* output, void* input, int row, int col)
 }
 
 /*
- * Flash attention: vanilla multi-head attention implementation
+ * Vanilla multi-head attention implementation
  *
  * attention = softmax(Q@K^T/sqrt(HS)) @ V
  *
@@ -366,64 +336,21 @@ void cuda_softmax(void* output, void* input, int row, int col)
  * @param NH: number of heads
  * @param HS: head size
  */
-void cuda_flash_attention(void *out, const void *inp, int batch, int row, int NH, int HS)
+void cuda_mha_attention(void *out, const void *inp, int batch, int row, int NH, int HS)
 {
-    float *vaccum, *qkv, *att;
-    int col = NH * HS;
-    cuda_check(cudaMalloc(&vaccum, batch * row * col * sizeof(float)));
-    cuda_check(cudaMalloc(&qkv, batch * row * 3 * col * sizeof(float)));
-    cuda_check(cudaMalloc(&att, batch * NH * row * row * sizeof(float)));
-
-    // permute and separate inp from (batch, row, 3, NH, HS) to 3X (batch, NH, row, HS)
-    float *q, *k, *v;
-    q = qkv + 0 * batch * row * col;
-    k = qkv + 1 * batch * row * col;
-    v = qkv + 2 * batch * row * col;
-    int total_threads = batch * NH * row * HS;
-    int block_size = 256;
-    int num_blocks = CEIL_DIV(total_threads, block_size);
-    permute_kernel<<<num_blocks, block_size>>>(q, k, v, (const float*)inp, batch, row, NH, HS);
-
-    const float alpha = 1.0f;
-    const float beta = 0.0f;
-    // batched matmul: q @ k^T # (batch, NH, row, HS) @ (batch, NH, HS, row) -> (batch, NH, row, row)
-    cublas_check(cublasSgemmStridedBatched(cublas_handle,
-                            CUBLAS_OP_T, CUBLAS_OP_N,
-                            row, row, HS,
-                            &alpha,
-                            k, HS, row * HS,
-                            q, HS, row * HS,
-                            &beta,
-                            att, row, row * row,
-                            batch * NH));
-
-    float scale = 1.0f / sqrtf(HS);
-    int softmax_block_size = 256;
-    size_t shared_mem_size = 2 * (softmax_block_size / 32) * sizeof(float);
-    int grid_size = batch * NH * row;
-    // attention = softmax(q @ k^T / sqrt(HS))
-    scaled_softmax_kernel<<<grid_size, softmax_block_size, shared_mem_size>>>(att, att, batch, NH, row, scale);
-
-    // batched matmul: att @ v # (batch, NH, row, row) @ (batch, NH, row, HS) -> (batch, NH, row, HS)
-    cublas_check(cublasSgemmStridedBatched(cublas_handle,
-                            CUBLAS_OP_N, CUBLAS_OP_N,
-                            HS, row, row,
-                            &alpha,
-                            v, HS, row * HS,
-                            att, row, row * row,
-                            &beta,
-                            vaccum, HS, row * HS,
-                            batch * NH));
-
-    // unpermute result from (batch, NH, row, HS) to (batch, row, NH * HS)
-    num_blocks = CEIL_DIV(batch * row * col, block_size);
-    unpermute_kernel<<<num_blocks, block_size>>>(vaccum, (float *)out, batch, row, NH, HS);
-
-    cuda_check(cudaFree(vaccum));
-    cuda_check(cudaFree(qkv));
-    cuda_check(cudaFree(att));
+    return cuda_gqa_attention(out, inp, batch, row, NH, NH, HS); // qNH = kvNH
 }
 
+/*
+ * GQA attention
+ * @param out: output matrix(batch, row, qNH, HS)
+ * @param inp: input matrix(batch, row, (qNH + 2 * kvNH) * HS) (Q, K, V) concatenated along the last dimension
+ * @param batch: batch size
+ * @param row: row size
+ * @param qNH: number of Q heads
+ * @param kvNH: number of K and V heads
+ * @param HS: head size
+ */
 void cuda_gqa_attention(void *out, const void *inp, int batch, int row, int qNH, int kvNH, int HS)
 {
     float *workspace, *qkv, *att;
@@ -451,8 +378,7 @@ void cuda_gqa_attention(void *out, const void *inp, int batch, int row, int qNH,
     int total_threads = batch * qNH * row * HS;
     int block_size = 256;
     int num_blocks = CEIL_DIV(total_threads, block_size);
-    gqa_permute_kernel<<<num_blocks, block_size>>>(q, k, v, (const float*)inp,
-                                                  batch, row, qNH, kvNH, HS);
+    gqa_permute_kernel<<<num_blocks, block_size>>>(q, k, v, (const float*)inp, batch, row, qNH, kvNH, HS);
 
     const float alpha = 1.0f;
     const float beta = 0.0f;
@@ -473,8 +399,7 @@ void cuda_gqa_attention(void *out, const void *inp, int batch, int row, int qNH,
     int softmax_block_size = 256;
     size_t shared_mem_size = 2 * (softmax_block_size / 32) * sizeof(float);
     int grid_size = batch * qNH * row;
-    scaled_softmax_kernel<<<grid_size, softmax_block_size, shared_mem_size>>>(
-        att, att, batch, qNH, row, scale);
+    scaled_softmax_kernel<<<grid_size, softmax_block_size, shared_mem_size>>>(att, att, batch, qNH, row, scale);
 
     // Batched matrix multiplication: attention @ V
     cublas_check(cublasSgemmStridedBatched(cublas_handle,
@@ -489,8 +414,7 @@ void cuda_gqa_attention(void *out, const void *inp, int batch, int row, int qNH,
 
     // Unpermute result from (batch, qNH, row, HS) -> (batch, row, qNH, HS)
     num_blocks = CEIL_DIV(batch * row * qNH * HS, block_size);
-    unpermute_kernel<<<num_blocks, block_size>>>(workspace, (float *)out,
-                                                batch, row, qNH, HS);
+    gqa_unpermute_kernel<<<num_blocks, block_size>>>(workspace, (float *)out, batch, row, qNH, HS);
 
     cuda_check(cudaFree(workspace));
     cuda_check(cudaFree(qkv));
