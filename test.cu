@@ -124,3 +124,80 @@ TEST(Cuda, cuda_flash_attention)
     cuda_free(d_inp);
 }
 
+TEST(Cuda, cuda_gqa_attention)
+{
+    { // Case: Single element input
+        int batch = 1;
+        int row = 1;
+        int qNH = 1;
+        int kvNH = 1;
+        int HS = 1;
+
+        float inp[3] = {0.1f, 0.2f, 0.3f};
+        float out[1] = {0};
+
+        float res[1] = {0.3f};
+
+        void *d_out = cuda_malloc(1 * sizeof(float));
+        void *d_inp = cuda_malloc(3 * sizeof(float));
+        cuda_to_device(d_inp, inp, 3 * sizeof(float));
+
+        cuda_gqa_attention(d_out, d_inp, batch, row, qNH, kvNH, HS);
+        cuda_to_host(out, d_out, 1 * sizeof(float));
+        assert_array_eq(res, out, 1);
+
+        cuda_free(d_out);
+        cuda_free(d_inp);
+    }
+
+    {
+        int batch = 2;
+        int row = 2;
+        int qNH = 4;
+        int kvNH = 2;
+        int HS = 2;
+        int qSize = qNH * HS;
+        int kvSize = kvNH * HS;
+
+        float inp[batch * row * (qSize + 2*kvSize)] = {
+            // Batch 1, Row 1
+            0.1f, 0.2f, 0.3f, 0.4f, 0.5f, 0.6f, 0.7f, 0.8f,     // Q (4 heads * 2 dims)
+            0.1f, 0.2f, 0.3f, 0.4f,                             // K (2 heads * 2 dims)
+            0.5f, 0.6f, 0.7f, 0.8f,                             // V (2 heads * 2 dims)
+            // Batch 1, Row 2
+            1.1f, 1.2f, 1.3f, 1.4f, 1.5f, 1.6f, 1.7f, 1.8f,     // Q
+            0.9f, 1.0f, 1.1f, 1.2f,                             // K
+            1.3f, 1.4f, 1.5f, 1.6f,                             // V
+            // Batch 2, Row 1 (same pattern as batch 1)
+            0.1f, 0.2f, 0.3f, 0.4f, 0.5f, 0.6f, 0.7f, 0.8f,
+            0.1f, 0.2f, 0.3f, 0.4f,
+            0.5f, 0.6f, 0.7f, 0.8f,
+            // Batch 2, Row 2
+            1.1f, 1.2f, 1.3f, 1.4f, 1.5f, 1.6f, 1.7f, 1.8f,
+            0.9f, 1.0f, 1.1f, 1.2f,
+            1.3f, 1.4f, 1.5f, 1.6f
+        };
+
+        float out[batch * row * qSize] = {0};
+
+        float res[batch * row * qSize] = {
+            // Batch 0
+            0.500000f, 0.600000f, 0.700000f, 0.800000f, 0.500000f, 0.600000f, 0.700000f, 0.800000f,
+            1.128813f, 1.228813f, 1.357295f, 1.457295f, 1.181927f, 1.281927f, 1.402936f, 1.502936f,
+            // Batch 1
+            0.500000f, 0.600000f, 0.700000f, 0.800000f, 0.500000f, 0.600000f, 0.700000f, 0.800000f,
+            1.128813f, 1.228813f, 1.357295f, 1.457295f, 1.181927f, 1.281927f, 1.402936f, 1.502936f
+        };
+
+        void *d_out = cuda_malloc(batch * row * qSize * sizeof(float));
+        void *d_inp = cuda_malloc(batch * row * (qSize + 2*kvSize) * sizeof(float));
+        cuda_to_device(d_inp, inp, batch * row * (qSize + 2*kvSize) * sizeof(float));
+
+        cuda_gqa_attention(d_out, d_inp, batch, row, qNH, kvNH, HS);
+        cuda_to_host(out, d_out, batch * row * qSize * sizeof(float));
+        assert_array_eq(res, out, batch * row * qSize);
+
+        cuda_free(d_out);
+        cuda_free(d_inp);
+    }
+}

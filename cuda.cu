@@ -163,6 +163,47 @@ __global__ void unpermute_kernel(const float* inp, float *out, int B, int N, int
     }
 }
 
+__global__ void gqa_permute_kernel(float* q, float* k, float* v, const float* inp,
+                                    int B, int N, int qNH, int kvNH, int HS)
+{
+    // Calculate total elements to process
+    const int total_elements = B * qNH * N * HS;
+
+    // Use grid-stride loop to handle multiple elements per thread
+    for (int idx = blockIdx.x * blockDim.x + threadIdx.x;
+         idx < total_elements;
+         idx += blockDim.x * gridDim.x) {
+
+        const int b = idx / (qNH * N * HS);
+        int remainder = idx % (qNH * N * HS);
+        const int qh = remainder / (N * HS);
+        remainder = remainder % (N * HS);
+        const int n = remainder / HS;
+        const int hs = remainder % HS;
+
+        // Calculate KV head index once
+        const int kh = qh % kvNH;
+
+        // Calculate base offset for input
+        const int inp_base = (b * N * (qNH + 2 * kvNH) * HS) +
+                            (n * (qNH + 2 * kvNH) * HS);
+
+        // Calculate output index once
+        const int out_idx = idx;  // idx is already in the correct format
+
+        // Handle Q
+        const int q_inp_idx = inp_base + (qh * HS) + hs;
+        q[out_idx] = inp[q_inp_idx];
+
+        // Handle K and V using the same output index but different input offsets
+        const int k_inp_idx = inp_base + (qNH * HS) + (kh * HS) + hs;
+        const int v_inp_idx = k_inp_idx + (kvNH * HS);
+
+        k[out_idx] = inp[k_inp_idx];
+        v[out_idx] = inp[v_inp_idx];
+    }
+}
+
 extern "C" {
 void cuda_init(void)
 {
@@ -379,6 +420,79 @@ void cuda_flash_attention(void *out, const void *inp, int batch, int row, int NH
     unpermute_kernel<<<num_blocks, block_size>>>(vaccum, (float *)out, batch, row, NH, HS);
 
     cuda_check(cudaFree(vaccum));
+    cuda_check(cudaFree(qkv));
+    cuda_check(cudaFree(att));
+}
+
+void cuda_gqa_attention(void *out, const void *inp, int batch, int row, int qNH, int kvNH, int HS)
+{
+    float *workspace, *qkv, *att;
+
+    // Allocate space for broadcasted K and V
+    size_t workspace_size = batch * qNH * row * HS * sizeof(float);
+    size_t qkv_size = (batch * qNH * row * HS * 3) * sizeof(float); // Now K and V are expanded to match Q size
+    size_t att_size = batch * qNH * row * row * sizeof(float);
+
+    cuda_check(cudaMalloc(&workspace, workspace_size));
+    cuda_check(cudaMalloc(&qkv, qkv_size));
+    cuda_check(cudaMalloc(&att, att_size));
+
+    float *q = qkv;
+    float *k = qkv + batch * qNH * row * HS;
+    float *v = k + batch * qNH * row * HS;
+
+    // Permute and broadcast input
+    // q: (batch, row, qNH, HS) -> (batch, qNH, row, HS)
+    // k: (batch, row, kvNH, HS) -> (batch, qNH, row, HS)
+    // v: (batch, row, kvNH, HS) -> (batch, qNH, row, HS)
+    //
+    // Tradeoff: it uses more memory for the broadcasted K and V tensors, but this should be acceptable
+    // given the benefits in simplicity and performance improvements (remove for-loop in following matmul)
+    int total_threads = batch * qNH * row * HS;
+    int block_size = 256;
+    int num_blocks = CEIL_DIV(total_threads, block_size);
+    gqa_permute_kernel<<<num_blocks, block_size>>>(q, k, v, (const float*)inp,
+                                                  batch, row, qNH, kvNH, HS);
+
+    const float alpha = 1.0f;
+    const float beta = 0.0f;
+
+    // Batched matrix multiplication: Q @ K^T
+    cublas_check(cublasSgemmStridedBatched(cublas_handle,
+                            CUBLAS_OP_T, CUBLAS_OP_N,
+                            row, row, HS,
+                            &alpha,
+                            k, HS, row * HS,
+                            q, HS, row * HS,
+                            &beta,
+                            att, row, row * row,
+                            batch * qNH));
+
+    // Apply scaled softmax with causal masking
+    float scale = 1.0f / sqrtf(HS);
+    int softmax_block_size = 256;
+    size_t shared_mem_size = 2 * (softmax_block_size / 32) * sizeof(float);
+    int grid_size = batch * qNH * row;
+    scaled_softmax_kernel<<<grid_size, softmax_block_size, shared_mem_size>>>(
+        att, att, batch, qNH, row, scale);
+
+    // Batched matrix multiplication: attention @ V
+    cublas_check(cublasSgemmStridedBatched(cublas_handle,
+                            CUBLAS_OP_N, CUBLAS_OP_N,
+                            HS, row, row,
+                            &alpha,
+                            v, HS, row * HS,
+                            att, row, row * row,
+                            &beta,
+                            workspace, HS, row * HS,
+                            batch * qNH));
+
+    // Unpermute result from (batch, qNH, row, HS) -> (batch, row, qNH, HS)
+    num_blocks = CEIL_DIV(batch * row * qNH * HS, block_size);
+    unpermute_kernel<<<num_blocks, block_size>>>(workspace, (float *)out,
+                                                batch, row, qNH, HS);
+
+    cuda_check(cudaFree(workspace));
     cuda_check(cudaFree(qkv));
     cuda_check(cudaFree(att));
 }
