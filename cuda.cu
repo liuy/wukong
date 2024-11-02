@@ -114,6 +114,80 @@ __global__ void scaled_softmax_kernel(float* out, const float* inp, int B, int N
     }
 }
 
+__global__ void softmax_kernel(float* output, const float* input, int row, int col) {
+    extern __shared__ float shared_mem[];
+    float* row_max = shared_mem;                    // First part of shared memory for max values
+    float* row_sum = &shared_mem[blockDim.x / 32];  // Second part for sum values
+
+    int tid = threadIdx.x;
+    int lane_id = tid % 32;
+    int warp_id = tid / 32;
+    int warps_per_block = blockDim.x / 32;
+    int row_idx = blockIdx.x;
+
+    if (row_idx >= row) return;
+
+    // Step 1: Find maximum value in the row
+    float thread_max = -INFINITY;
+    for (int i = tid; i < col; i += blockDim.x) {
+        thread_max = fmaxf(thread_max, input[row_idx * col + i]);
+    }
+
+    // Warp-level reduction for max
+    thread_max = warpReduceMax(thread_max);
+
+    // Store per-warp results
+    if (lane_id == 0) {
+        row_max[warp_id] = thread_max;
+    }
+    __syncthreads();
+
+    // Final reduction for max across warps
+    if (tid == 0) {
+        float max_val = row_max[0];
+        for (int i = 1; i < warps_per_block; i++) {
+            max_val = fmaxf(max_val, row_max[i]);
+        }
+        row_max[0] = max_val;
+    }
+    __syncthreads();
+
+    // Step 2: Compute exp(x - max) and sum
+    float max_val = row_max[0];
+    float thread_sum = 0.0f;
+
+    for (int i = tid; i < col; i += blockDim.x) {
+        float val = expf(input[row_idx * col + i] - max_val);
+        output[row_idx * col + i] = val;  // Store intermediate result
+        thread_sum += val;
+    }
+
+    // Warp-level reduction for sum
+    thread_sum = warpReduceSum(thread_sum);
+
+    // Store per-warp sums
+    if (lane_id == 0) {
+        row_sum[warp_id] = thread_sum;
+    }
+    __syncthreads();
+
+    // Final reduction for sum across warps
+    if (tid == 0) {
+        float sum = row_sum[0];
+        for (int i = 1; i < warps_per_block; i++) {
+            sum += row_sum[i];
+        }
+        row_sum[0] = sum;
+    }
+    __syncthreads();
+
+    // Step 3: Normalize by sum
+    float inv_sum = 1.0f / row_sum[0];
+    for (int i = tid; i < col; i += blockDim.x) {
+        output[row_idx * col + i] *= inv_sum;
+    }
+}
+
 __global__ void gqa_unpermute_kernel(const float* inp, float *out, int B, int N, int NH, int d)
 {
    // out has shape (B, nh, N, d) but we need to unpermute it to (B, N, nh, d)
@@ -309,19 +383,10 @@ void cuda_matmul(void *out, const void *inp, const void *weight, const void *bia
  */
 void cuda_softmax(void* output, void* input, int row, int col)
 {
-    cudnnTensorDescriptor_t inputDesc, outputDesc;
-    cudnn_check(cudnnCreateTensorDescriptor(&inputDesc));
-    cudnn_check(cudnnCreateTensorDescriptor(&outputDesc));
-
-    cudnn_check(cudnnSetTensor4dDescriptor(inputDesc, CUDNN_TENSOR_NCHW, CUDNN_DATA_FLOAT, row, col, 1, 1));
-    cudnn_check(cudnnSetTensor4dDescriptor(outputDesc, CUDNN_TENSOR_NCHW, CUDNN_DATA_FLOAT, row, col, 1, 1));
-
-    float alpha = 1.0f, beta = 0.0f;
-    cudnn_check(cudnnSoftmaxForward(cudnn_handle, CUDNN_SOFTMAX_ACCURATE, CUDNN_SOFTMAX_MODE_CHANNEL, &alpha,
-                                    inputDesc, input, &beta, outputDesc, output));
-
-    cudnnDestroyTensorDescriptor(inputDesc);
-    cudnnDestroyTensorDescriptor(outputDesc);
+    const int block_size = 256;
+    const int shared_mem_size = (2 * (block_size / 32)) * sizeof(float); // Space for max and sum values
+    softmax_kernel<<<row, block_size, shared_mem_size>>>((float *)output, (const float *)input, row, col);
+    cuda_check(cudaGetLastError());
 }
 
 /*
