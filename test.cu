@@ -201,3 +201,54 @@ TEST(Cuda, cuda_gqa_attention)
         cuda_free(d_inp);
     }
 }
+
+TEST(Cuda, cuda_mqa_attention)
+{
+    int batch = 2;
+    int row = 2;
+    int qNH = 4;
+    int HS = 2;
+    int qSize = qNH * HS;
+    int kvSize = HS; // kvNH = 1 for MQA
+
+    float inp[batch * row * (qSize + 2*kvSize)] = {
+        // Batch 1, Row 1
+        0.1f, 0.2f, 0.3f, 0.4f, 0.5f, 0.6f, 0.7f, 0.8f,     // Q (4 heads * 2 dims)
+        0.1f, 0.2f,                                          // K (1 head * 2 dims)
+        0.5f, 0.6f,                                          // V (1 head * 2 dims)
+        // Batch 1, Row 2
+        1.1f, 1.2f, 1.3f, 1.4f, 1.5f, 1.6f, 1.7f, 1.8f,     // Q
+        0.9f, 1.0f,                                          // K
+        1.3f, 1.4f,                                          // V
+        // Batch 2, Row 1 (same pattern as batch 1)
+        0.1f, 0.2f, 0.3f, 0.4f, 0.5f, 0.6f, 0.7f, 0.8f,
+        0.1f, 0.2f,
+        0.5f, 0.6f,
+        // Batch 2, Row 2
+        1.1f, 1.2f, 1.3f, 1.4f, 1.5f, 1.6f, 1.7f, 1.8f,
+        0.9f, 1.0f,
+        1.3f, 1.4f
+    };
+
+    float out[batch * row * qSize] = {0};
+
+    float res[batch * row * qSize] = {
+        // Batch 0
+        0.500000f, 0.600000f, 0.500000f, 0.600000f, 0.500000f, 0.600000f, 0.500000f, 0.600000f,
+        1.128813f, 1.228813f, 1.157295f, 1.257295f, 1.181927f, 1.281927f, 1.202936f, 1.302936f,
+        // Batch 1
+        0.500000f, 0.600000f, 0.500000f, 0.600000f, 0.500000f, 0.600000f, 0.500000f, 0.600000f,
+        1.128813f, 1.228813f, 1.157295f, 1.257295f, 1.181927f, 1.281927f, 1.202936f, 1.302936f
+    };
+
+    void *d_out = cuda_malloc(batch * row * qSize * sizeof(float));
+    void *d_inp = cuda_malloc(batch * row * (qSize + 2*kvSize) * sizeof(float));
+    cuda_to_device(d_inp, inp, batch * row * (qSize + 2*kvSize) * sizeof(float));
+
+    cuda_mqa_attention(d_out, d_inp, batch, row, qNH, HS);
+    cuda_to_host(out, d_out, batch * row * qSize * sizeof(float));
+    assert_array_eq(res, out, batch * row * qSize);
+
+    cuda_free(d_out);
+    cuda_free(d_inp);
+}

@@ -335,6 +335,7 @@ void cuda_softmax(void* output, void* input, int row, int col)
  * @param row: row size
  * @param NH: number of heads
  * @param HS: head size
+ * @attention col = NH * HS
  */
 void cuda_mha_attention(void *out, const void *inp, int batch, int row, int NH, int HS)
 {
@@ -342,8 +343,22 @@ void cuda_mha_attention(void *out, const void *inp, int batch, int row, int NH, 
 }
 
 /*
+ * MQA attention
+ * @param out: output matrix(batch, row, col) where col = qNH * HS
+ * @param inp: input matrix(batch, row, (qNH + 2 * kvNH) * HS) (Q, K, V) concatenated along the last dimension
+ * @param batch: batch size
+ * @param row: row size
+ * @param qNH: number of Q heads
+ * @param HS: head size
+ */
+void cuda_mqa_attention(void *out, const void *inp, int batch, int row, int qNH, int HS)
+{
+    return cuda_gqa_attention(out, inp, batch, row, qNH, 1, HS); // kvNH = 1
+}
+
+/*
  * GQA attention
- * @param out: output matrix(batch, row, qNH, HS)
+ * @param out: output matrix(batch, row, col) where col = qNH * HS
  * @param inp: input matrix(batch, row, (qNH + 2 * kvNH) * HS) (Q, K, V) concatenated along the last dimension
  * @param batch: batch size
  * @param row: row size
