@@ -30,7 +30,8 @@ __device__ float warpReduceMax(float val) {
 
 // Handles both scaling of attention scores and softmax computation with causal masking
 // inp/out shape: (B, NH, T, T)
-__global__ void scaled_softmax_kernel(float* out, const float* inp, int B, int NH, int T, float scale) {
+__global__ void scaled_softmax_kernel(float* out, const float* inp, int B, int NH, int T, float scale)
+ {
     extern __shared__ float shared[];
     int batch_idx = blockIdx.x / (NH * T); // batch index
     int head_idx = (blockIdx.x / T) % NH;  // head index
@@ -281,6 +282,16 @@ __global__ void gqa_unpermute_kernel(const float* inp, float* out, int B, int N,
     }
 }
 
+__global__ void add_bias(float* out, const float* bias, int T, int OC)
+{
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    int stride = blockDim.x * gridDim.x;
+    for (int i = idx; i < T * OC; i += stride) {
+        int col = i % OC;
+        out[i] += bias[col];
+    }
+}
+
 extern "C" {
 void cuda_init(void)
 {
@@ -340,19 +351,24 @@ void cuda_to_host(void* dst, void* src, size_t size)
     cuda_check(cudaMemcpy(dst, src, size, cudaMemcpyDeviceToHost));
 }
 
-/*
- * Fused matrix multiplication with optional bias addition: out = inp @ weight + bias
- *
- * @param out: output matrix(row, oc)
- * @param inp: input matrix(row, column)
- * @param weight: weight matrix(column, oc)
- * @param bias: optional bias vector(oc) (can be NULL)
- * @param row: input row size
- * @param column: input column size
- * @param oc: output column size
- */
-void cuda_matmul(void *out, const void *inp, const void *weight, const void *bias,
-            int row, int column, int oc)
+void cuda_matmul_cublas(float *out, const float *inp, const float *weight, const float *bias,
+                        int row, int column, int oc)
+{
+    const float alpha = 1.0f;
+    const float beta = 0.0f;
+    // cublas sees us transposed, so we want out(oc, row) = weight(oc, c) @ inp(c, row) + bias
+    cublas_check(cublasSgemm(cublas_handle, CUBLAS_OP_N, CUBLAS_OP_N, oc, row, column, /* M, N, K*/
+                            &alpha, weight, oc, inp, column, &beta, out, oc));
+    if (bias != NULL) {
+        int block_size = cuda_threads_per_block;
+        int grid_size = CEIL_DIV(oc * row, block_size);
+        add_bias<<<grid_size, block_size>>>(out, bias, row, oc);
+        cuda_check(cudaGetLastError());
+    }
+}
+
+void cuda_matmul_cublaslt(void *out, const void *inp, const void *weight, const void *bias,
+                        int row, int column, int oc)
 {
     int res;
     bool has_bias = (bias != nullptr);
@@ -405,6 +421,23 @@ void cuda_matmul(void *out, const void *inp, const void *weight, const void *bia
     cublas_check(cublasLtMatrixLayoutDestroy(inp_layout));
     cublas_check(cublasLtMatrixLayoutDestroy(out_layout));
     cublas_check(cublasLtMatrixLayoutDestroy(bias_layout));
+}
+
+/*
+ * Fused matrix multiplication with optional bias addition: out = inp @ weight + bias
+ *
+ * @param out: output matrix(row, oc)
+ * @param inp: input matrix(row, column)
+ * @param weight: weight matrix(column, oc)
+ * @param bias: optional bias vector(oc) (can be NULL)
+ * @param row: input row size
+ * @param column: input column size
+ * @param oc: output column size
+ */
+void cuda_matmul(void *out, const void *inp, const void *weight, const void *bias,
+                int row, int column, int oc)
+{
+    return cuda_matmul_cublaslt(out, inp, weight, bias, row, column, oc);
 }
 
 /*
