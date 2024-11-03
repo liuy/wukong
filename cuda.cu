@@ -188,63 +188,96 @@ __global__ void softmax_kernel(float* output, const float* input, int row, int c
     }
 }
 
-__global__ void gqa_unpermute_kernel(const float* inp, float *out, int B, int N, int NH, int d)
+__global__ void gqa_permute_kernel(float* q, float* k, float* v, const float* inp,
+                                 int B, int N, int qNH, int kvNH, int HS)
 {
-   // out has shape (B, nh, N, d) but we need to unpermute it to (B, N, nh, d)
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    int gNH = qNH / kvNH; // number of query heads per key/value head
 
-    // out[b][n][nh_][d_] <- inp[b][nh_][n][d_]
-    if (idx < B * NH * N * d) {
-        int b = idx / (NH * N * d);
-        int rest = idx % (NH * N * d);
-        int nh_ = rest / (N * d);
-        rest = rest % (N * d);
-        int n = rest / d;
-        int d_ = rest % d;
+    // Handle Q permute: (B, N, qNH, HS) -> (B, gNH, kvNH, N, HS)
+    if (idx < B * qNH * N * HS) {
+        int b = idx / (qNH * N * HS);
+        int rest = idx % (qNH * N * HS);
+        int qh = rest / (N * HS);
+        rest = rest % (N * HS);
+        int n = rest / HS;
+        int hs = rest % HS;
 
-        int other_idx = (b * NH * N * d) + (n * NH * d) + (nh_ * d) + d_;
-        out[other_idx] = inp[idx];
+        // Calculate group and kv head indices
+        int g = qh / kvNH;  // group index
+        int kh = qh % kvNH; // corresponding kv head index
+
+        // Input index
+        int inp_idx = (b * N * (qNH + 2 * kvNH) * HS) +
+                     (n * (qNH + 2 * kvNH) * HS) +
+                     (qh * HS) + hs;
+
+        // Output index for Q
+        int q_idx = ((b * gNH * kvNH * N * HS) +
+                    (g * kvNH * N * HS) +
+                    (kh * N * HS) +
+                    (n * HS) + hs);
+
+        q[q_idx] = inp[inp_idx];
+    }
+
+    // Handle K,V permute: (B, N, kvNH, HS) -> (B, kvNH, N, HS)
+    if (idx < B * kvNH * N * HS) {
+        int b = idx / (kvNH * N * HS);
+        int rest = idx % (kvNH * N * HS);
+        int kh = rest / (N * HS);
+        rest = rest % (N * HS);
+        int n = rest / HS;
+        int hs = rest % HS;
+
+        // Input indices
+        int k_inp_idx = (b * N * (qNH + 2 * kvNH) * HS) +
+                       (n * (qNH + 2 * kvNH) * HS) +
+                       (qNH * HS) +
+                       (kh * HS) + hs;
+
+        int v_inp_idx = k_inp_idx + (kvNH * HS);
+
+        // Output indices
+        int kv_idx = (b * kvNH * N * HS) +
+                    (kh * N * HS) +
+                    (n * HS) + hs;
+
+        k[kv_idx] = inp[k_inp_idx];
+        v[kv_idx] = inp[v_inp_idx];
     }
 }
 
-__global__ void gqa_permute_kernel(float* q, float* k, float* v, const float* inp,
-                                    int B, int N, int qNH, int kvNH, int HS)
+// Transform from (B, gNH, kvNH, N, HS) to (B, N, qNH, HS)
+__global__ void gqa_unpermute_kernel(const float* inp, float* out, int B, int N, int qNH, int kvNH, int HS)
 {
-    // Calculate total elements to process
-    const int total_elements = B * qNH * N * HS;
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    int gNH = qNH / kvNH;
 
-    // Use grid-stride loop to handle multiple elements per thread
-    for (int idx = blockIdx.x * blockDim.x + threadIdx.x;
-         idx < total_elements;
-         idx += blockDim.x * gridDim.x) {
+    if (idx < B * qNH * N * HS) {
+        int b = idx / (qNH * N * HS);
+        int rest = idx % (qNH * N * HS);
+        int qh = rest / (N * HS);
+        rest = rest % (N * HS);
+        int n = rest / HS;
+        int hs = rest % HS;
 
-        const int b = idx / (qNH * N * HS);
-        int remainder = idx % (qNH * N * HS);
-        const int qh = remainder / (N * HS);
-        remainder = remainder % (N * HS);
-        const int n = remainder / HS;
-        const int hs = remainder % HS;
+        // Calculate group and kv head indices
+        int g = qh / kvNH;
+        int kh = qh % kvNH;
 
-        // Calculate KV head index once
-        const int kh = qh % kvNH;
+        // Input index
+        int inp_idx = (b * gNH * kvNH * N * HS) +
+                     (g * kvNH * N * HS) +
+                     (kh * N * HS) +
+                     (n * HS) + hs;
 
-        // Calculate base offset for input
-        const int inp_base = (b * N * (qNH + 2 * kvNH) * HS) +
-                            (n * (qNH + 2 * kvNH) * HS);
+        // Output index
+        int out_idx = (b * N * qNH * HS) +
+                     (n * qNH * HS) +
+                     (qh * HS) + hs;
 
-        // Calculate output index once
-        const int out_idx = idx;  // idx is already in the correct format
-
-        // Handle Q
-        const int q_inp_idx = inp_base + (qh * HS) + hs;
-        q[out_idx] = inp[q_inp_idx];
-
-        // Handle K and V using the same output index but different input offsets
-        const int k_inp_idx = inp_base + (qNH * HS) + (kh * HS) + hs;
-        const int v_inp_idx = k_inp_idx + (kvNH * HS);
-
-        k[out_idx] = inp[k_inp_idx];
-        v[out_idx] = inp[v_inp_idx];
+        out[out_idx] = inp[inp_idx];
     }
 }
 
@@ -434,67 +467,73 @@ void cuda_mqa_attention(void *out, const void *inp, int batch, int row, int qNH,
 void cuda_gqa_attention(void *out, const void *inp, int batch, int row, int qNH, int kvNH, int HS)
 {
     float *workspace, *qkv, *att;
+    int gNH = qNH / kvNH;  // number of grouped query heads
 
-    // Allocate space for broadcasted K and V
     size_t workspace_size = batch * qNH * row * HS * sizeof(float);
-    size_t qkv_size = (batch * qNH * row * HS * 3) * sizeof(float); // Now K and V are expanded to match Q size
-    size_t att_size = batch * qNH * row * row * sizeof(float);
+    size_t qkv_size = (batch * row * (qNH + 2 * kvNH) * HS) * sizeof(float);
+    size_t att_size = batch * gNH * kvNH * row * row * sizeof(float);
 
     cuda_check(cudaMalloc(&workspace, workspace_size));
     cuda_check(cudaMalloc(&qkv, qkv_size));
     cuda_check(cudaMalloc(&att, att_size));
 
     float *q = qkv;
-    float *k = qkv + batch * qNH * row * HS;
-    float *v = k + batch * qNH * row * HS;
+    float *k = qkv + batch * row * qNH * HS;
+    float *v = k + batch * row * kvNH * HS;
 
-    // Permute and broadcast input
-    // q: (batch, row, qNH, HS) -> (batch, qNH, row, HS)
-    // k: (batch, row, kvNH, HS) -> (batch, qNH, row, HS)
-    // v: (batch, row, kvNH, HS) -> (batch, qNH, row, HS)
-    //
-    // Tradeoff: it uses more memory for the broadcasted K and V tensors, but this should be acceptable
-    // given the benefits in simplicity and performance improvements (remove for-loop in following matmul)
+    // 1. Permute and separate input
+    // q: (batch, row, qNH, HS) -> (batch, gNH, kvNH, row, HS)
+    // k: (batch, row, kvNH, HS) -> (batch, kvNH, row, HS)
+    // v: (batch, row, kvNH, HS) -> (batch, kvNH, row, HS)
     int total_threads = batch * qNH * row * HS;
     int block_size = 256;
     int num_blocks = CEIL_DIV(total_threads, block_size);
-    gqa_permute_kernel<<<num_blocks, block_size>>>(q, k, v, (const float*)inp, batch, row, qNH, kvNH, HS);
+    gqa_permute_kernel<<<num_blocks, block_size>>>(q, k, v, (const float*)inp,
+                                                  batch, row, qNH, kvNH, HS);
 
     const float alpha = 1.0f;
     const float beta = 0.0f;
 
-    // Batched matrix multiplication: Q @ K^T
-    cublas_check(cublasSgemmStridedBatched(cublas_handle,
-                            CUBLAS_OP_T, CUBLAS_OP_N,
-                            row, row, HS,
-                            &alpha,
-                            k, HS, row * HS,
-                            q, HS, row * HS,
-                            &beta,
-                            att, row, row * row,
-                            batch * qNH));
+    // 2. Batched matrix multiplication: Q @ K^T  # (batch, gNH, kvNH, row, HS) @ (batch, kvNH, HS, row) -> (batch, gNH, kvNH, row, row)
+    for (int g = 0; g < gNH; g++) {
+        float* q_group = q + g * kvNH * batch * row * HS;
+        cublas_check(cublasSgemmStridedBatched(cublas_handle,
+                                CUBLAS_OP_T, CUBLAS_OP_N,
+                                row, row, HS,
+                                &alpha,
+                                k, HS, row * HS,
+                                q_group, HS, row * HS,
+                                &beta,
+                                att + g * kvNH * batch * row * row,
+                                row, row * row,
+                                batch * kvNH));
+    }
 
-    // Apply scaled softmax with causal masking
+    // 3. Apply scaled softmax with causal masking
     float scale = 1.0f / sqrtf(HS);
     int softmax_block_size = 256;
     size_t shared_mem_size = 2 * (softmax_block_size / 32) * sizeof(float);
-    int grid_size = batch * qNH * row;
-    scaled_softmax_kernel<<<grid_size, softmax_block_size, shared_mem_size>>>(att, att, batch, qNH, row, scale);
+    int grid_size = batch * gNH * kvNH * row;
+    scaled_softmax_kernel<<<grid_size, softmax_block_size, shared_mem_size>>>(
+        att, att, batch * gNH, kvNH, row, scale);
 
-    // Batched matrix multiplication: attention @ V
-    cublas_check(cublasSgemmStridedBatched(cublas_handle,
-                            CUBLAS_OP_N, CUBLAS_OP_N,
-                            HS, row, row,
-                            &alpha,
-                            v, HS, row * HS,
-                            att, row, row * row,
-                            &beta,
-                            workspace, HS, row * HS,
-                            batch * qNH));
-
-    // Unpermute result from (batch, qNH, row, HS) -> (batch, row, qNH, HS)
+    // 4. Batched matrix multiplication: attention @ V # (batch, gNH, kvNH, row, row) @ (batch, kvNH, row, HS) -> (batch, gNH, kvNH, row, HS)
+    for (int g = 0; g < gNH; g++) {
+        float* workspace_group = workspace + g * kvNH * batch * row * HS;
+        cublas_check(cublasSgemmStridedBatched(cublas_handle,
+                                CUBLAS_OP_N, CUBLAS_OP_N,
+                                HS, row, row,
+                                &alpha,
+                                v, HS, row * HS,
+                                att + g * kvNH * batch * row * row,
+                                row, row * row,
+                                &beta,
+                                workspace_group, HS, row * HS,
+                                batch * kvNH));
+    }
+    // 5. Unpermute result # (batch, gNH, kvNH, row, HS) -> (batch, row, qNH, HS)
     num_blocks = CEIL_DIV(batch * row * qNH * HS, block_size);
-    gqa_unpermute_kernel<<<num_blocks, block_size>>>(workspace, (float *)out, batch, row, qNH, HS);
+    gqa_unpermute_kernel<<<num_blocks, block_size>>>(workspace, (float *)out, batch, row, qNH, kvNH, HS);
 
     cuda_check(cudaFree(workspace));
     cuda_check(cudaFree(qkv));

@@ -80,7 +80,7 @@ TEST(Cuda, cuda_softmax)
     cuda_free(d_inp);
 }
 
-TEST(Cuda, cuda_flash_attention)
+TEST(Cuda, cuda_mha_attention)
 {
     int batch = 2;
     int row = 4;
