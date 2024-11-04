@@ -252,3 +252,44 @@ TEST(Cuda, cuda_mqa_attention)
     cuda_free(d_out);
     cuda_free(d_inp);
 }
+
+TEST(Cuda, cuda_rmsnorm)
+{
+    int batch = 2;
+    int row = 2;
+    int col = 4;
+
+    float inp[batch * row * col] = {
+        0.1f, 0.2f, 0.3f, 0.4f,
+        0.5f, 0.6f, 0.7f, 0.8f,
+        0.9f, 1.0f, 1.1f, 1.2f,
+        1.3f, 1.4f, 1.5f, 1.6f
+    };
+
+    float weight[col] = {0.5f, 0.6f, 0.7f, 0.8f};
+
+    float out[batch * row * col] = {0};
+
+    float res[batch * row * col] = {
+        0.182562f, 0.438149f, 0.766761f, 1.168397f,
+        0.379045f, 0.545824f, 0.742928f, 0.970354f,
+        0.426160f, 0.568214f, 0.729208f, 0.909142f,
+        0.446948f, 0.577595f, 0.721993f, 0.880144f,
+    };
+
+    void *d_out = cuda_malloc(batch * row * col * sizeof(float));
+    void *d_inp = cuda_malloc(batch * row * col * sizeof(float));
+    void *d_weight = cuda_malloc(col * sizeof(float));
+
+    cuda_to_device(d_inp, inp, batch * row * col * sizeof(float));
+    cuda_to_device(d_weight, weight, col * sizeof(float));
+
+    cuda_rmsnorm(d_out, d_inp, d_weight, batch, row, col);
+    cuda_to_host(out, d_out, batch * row * col * sizeof(float));
+
+    assert_array_eq(res, out, batch * row * col);
+
+    cuda_free(d_out);
+    cuda_free(d_inp);
+    cuda_free(d_weight);
+}

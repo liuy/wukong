@@ -12,6 +12,7 @@
 #include <cooperative_groups.h>
 #include <cooperative_groups/reduce.h>
 
+#define WARP_SIZE 32U
 // ----------------------------------------------------------------------------
 // reduced/mixed precision utilities
 
@@ -90,6 +91,7 @@ void cuda_softmax(void* output, void* intput, int row, int col);
 void cuda_mha_attention(void *out, const void *inp, int batch, int row, int NH, int HS);
 void cuda_gqa_attention(void *out, const void *inp, int batch, int row, int qNH, int kvNH, int HS);
 void cuda_mqa_attention(void *out, const void *inp, int batch, int row, int qNH, int HS);
+void cuda_rmsnorm(void* out, const void* inp, const void* weight, int batch, int row, int col);
 }
 
 #endif

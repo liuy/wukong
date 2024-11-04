@@ -282,13 +282,65 @@ __global__ void gqa_unpermute_kernel(const float* inp, float* out, int B, int N,
     }
 }
 
-__global__ void add_bias(float* out, const float* bias, int T, int OC)
+__global__ void add_bias_kernel(float* out, const float* bias, int T, int OC)
 {
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
     int stride = blockDim.x * gridDim.x;
     for (int i = idx; i < T * OC; i += stride) {
         int col = i % OC;
         out[i] += bias[col];
+    }
+}
+
+__global__ void rmsnorm_kernel(float* __restrict__ out, const float* __restrict__ inp,
+                              const float* __restrict__ weight, int N, int C)
+{
+    namespace cg = cooperative_groups;
+    cg::thread_block block = cg::this_thread_block();
+    cg::thread_block_tile<32> warp = cg::tiled_partition<32>(block);
+
+    __shared__ float shared_sum2[WARP_SIZE]; // One element per warp for squared sum
+
+    int num_warps = blockDim.x / WARP_SIZE;
+    int warp_id = threadIdx.x / WARP_SIZE;
+    int lane_id = threadIdx.x % WARP_SIZE;
+    int idx = blockIdx.x; // One block per row
+
+    // Point to current sequence position
+    const float* x = inp + idx * C;
+
+    // Thread coarsening through the row
+    float thread_sum2 = 0.0f;
+
+    // Each thread accumulates multiple elements
+    for (int i = threadIdx.x; i < C; i += blockDim.x) {
+        float xi = x[i];
+        thread_sum2 += xi * xi;
+    }
+
+    // Warp-level reduction for sum of squares
+    float warp_sum2 = cg::reduce(warp, thread_sum2, cg::plus<float>{});
+
+    // Store warp-level results to shared memory
+    if (lane_id == 0) {
+        shared_sum2[warp_id] = warp_sum2;
+    }
+    __syncthreads();
+
+    // Load results from shared memory to threads, pad with zeros for out-of-bounds threads
+    warp_sum2 = (lane_id < num_warps) ? shared_sum2[lane_id] : 0.0f;
+
+    // Reduce the warp-level results
+    float block_sum2 = cg::reduce(warp, warp_sum2, cg::plus<float>{});
+
+    block_sum2 /= C; // mean(x**2)
+    float s = rsqrtf(block_sum2 + 1e-5f); // 1 / sqrt(mean(x**2) + eps)
+
+    // Apply normalization and scaling
+    float* o = out + idx * C;
+    for (int i = threadIdx.x; i < C; i += blockDim.x) {
+        float val = __ldcs(x + i);
+        __stcs(o + i, val * s * weight[i]); // x / sqrt(mean(x**2) + eps) * weight
     }
 }
 
@@ -362,7 +414,7 @@ void cuda_matmul_cublas(float *out, const float *inp, const float *weight, const
     if (bias != NULL) {
         int block_size = cuda_threads_per_block;
         int grid_size = CEIL_DIV(oc * row, block_size);
-        add_bias<<<grid_size, block_size>>>(out, bias, row, oc);
+        add_bias_kernel<<<grid_size, block_size>>>(out, bias, row, oc);
         cuda_check(cudaGetLastError());
     }
 }
@@ -571,6 +623,14 @@ void cuda_gqa_attention(void *out, const void *inp, int batch, int row, int qNH,
     cuda_check(cudaFree(workspace));
     cuda_check(cudaFree(qkv));
     cuda_check(cudaFree(att));
+}
+
+// Root Mean Square Layer Normalization: x / sqrt(mean(x^2) + eps) * weight
+void cuda_rmsnorm(void* out, const void* inp, const void* weight, int batch, int row, int col)
+{
+    const int block_size = 256;
+    const int N = batch * row;
+    rmsnorm_kernel<<<N, block_size>>>((floatX *)out, (const floatX *)inp, (const floatX *)weight, N, col);
 }
 
 }
