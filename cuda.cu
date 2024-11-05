@@ -37,9 +37,9 @@ __global__ void scaled_softmax_kernel(float* out, const float* inp, int B, int N
     int head_idx = (blockIdx.x / T) % NH;  // head index
     int row_idx = blockIdx.x % T;          // row index within the attention matrix
     int tid = threadIdx.x;
-    int warpId = threadIdx.x / 32;         // warp index within a block
-    int laneId = threadIdx.x % 32;         // thread index within a warp
-    int warpsPerBlock = blockDim.x / 32;
+    int warpId = threadIdx.x / WARP_SIZE;         // warp index within a block
+    int laneId = threadIdx.x % WARP_SIZE;         // thread index within a warp
+    int warpsPerBlock = blockDim.x / WARP_SIZE;
 
     // shared memory layout: first half for max values, second half for sum values
     float* maxvals = shared;
@@ -118,12 +118,12 @@ __global__ void scaled_softmax_kernel(float* out, const float* inp, int B, int N
 __global__ void softmax_kernel(float* output, const float* input, int row, int col) {
     extern __shared__ float shared_mem[];
     float* row_max = shared_mem;                    // First part of shared memory for max values
-    float* row_sum = &shared_mem[blockDim.x / 32];  // Second part for sum values
+    float* row_sum = &shared_mem[blockDim.x / WARP_SIZE];  // Second part for sum values
 
     int tid = threadIdx.x;
-    int lane_id = tid % 32;
-    int warp_id = tid / 32;
-    int warps_per_block = blockDim.x / 32;
+    int lane_id = tid % WARP_SIZE;
+    int warp_id = tid / WARP_SIZE;
+    int warps_per_block = blockDim.x / WARP_SIZE;
     int row_idx = blockIdx.x;
 
     if (row_idx >= row) return;
@@ -297,7 +297,7 @@ __global__ void rmsnorm_kernel(float* __restrict__ out, const float* __restrict_
 {
     namespace cg = cooperative_groups;
     cg::thread_block block = cg::this_thread_block();
-    cg::thread_block_tile<32> warp = cg::tiled_partition<32>(block);
+    cg::thread_block_tile<WARP_SIZE> warp = cg::tiled_partition<WARP_SIZE>(block);
 
     __shared__ float shared_sum2[WARP_SIZE]; // One element per warp for squared sum
 
@@ -502,7 +502,7 @@ void cuda_matmul(void *out, const void *inp, const void *weight, const void *bia
 void cuda_softmax(void* output, void* input, int row, int col)
 {
     const int block_size = 256;
-    const int shared_mem_size = (2 * (block_size / 32)) * sizeof(float); // Space for max and sum values
+    const int shared_mem_size = (2 * (block_size / WARP_SIZE)) * sizeof(float); // Space for max and sum values
     softmax_kernel<<<row, block_size, shared_mem_size>>>((float *)output, (const float *)input, row, col);
     cuda_check(cudaGetLastError());
 }
@@ -597,7 +597,7 @@ void cuda_gqa_attention(void *out, const void *inp, int batch, int row, int qNH,
     // 3. Apply scaled softmax with causal masking
     float scale = 1.0f / sqrtf(HS);
     int softmax_block_size = 256;
-    size_t shared_mem_size = 2 * (softmax_block_size / 32) * sizeof(float);
+    size_t shared_mem_size = 2 * (softmax_block_size / WARP_SIZE) * sizeof(float);
     int grid_size = batch * gNH * kvNH * row;
     scaled_softmax_kernel<<<grid_size, softmax_block_size, shared_mem_size>>>(
         att, att, batch * gNH, kvNH, row, scale);
