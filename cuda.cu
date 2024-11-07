@@ -424,27 +424,27 @@ void cuda_matmul_cublaslt(void *out, const void *inp, const void *weight, const 
 {
     int res;
     bool has_bias = (bias != nullptr);
-    bool has_gelu = false; /* TODO: Fuse GELU */
     cublasLtMatmulDesc_t desc;
     cublasLtMatmulPreference_t pref;
     cublasLtMatrixLayout_t inp_layout, weight_layout, out_layout, bias_layout;
     cublasLtMatmulHeuristicResult_t heuristic;
     cublasOperation_t notrans = CUBLAS_OP_N;
+    cublasOperation_t trans = CUBLAS_OP_T;
     cublasLtEpilogue_t epilogue = has_bias ? CUBLASLT_EPILOGUE_BIAS : CUBLASLT_EPILOGUE_DEFAULT;
 
     /*
-     * Cuda is colum-major, for row-major Array, if we want to get: out = inp @ weight, 'out' should be 'out.T'.
-     * Mathematically, out.T = weight.T @ inp.T. Since cuda is colum-major, 'weight.T' should be weight, 'inp.T' should be inp.
-     * so calculating out.T = weight & inp.
+     * Cuda is colum-major, for row-major Array, if we want to get: out = inp @ weight.T, 'out' should be 'out.T'.
+     * Mathematically, out.T = weight @ inp.T. Since cuda is colum-major, 'weight' should be weight.T, 'inp.T' should be inp.
+     * so calculating out.T = weight.T & inp.
      */
     cublas_check(cublasLtMatmulDescCreate(&desc, cublas_compute_type, CUDA_R_32F));
-    cublas_check(cublasLtMatmulDescSetAttribute(desc, CUBLASLT_MATMUL_DESC_TRANSA, &notrans, sizeof(notrans)));
+    cublas_check(cublasLtMatmulDescSetAttribute(desc, CUBLASLT_MATMUL_DESC_TRANSA, &trans, sizeof(notrans)));
     cublas_check(cublasLtMatmulDescSetAttribute(desc, CUBLASLT_MATMUL_DESC_TRANSB, &notrans, sizeof(notrans)));
     cublas_check(cublasLtMatmulDescSetAttribute(desc, CUBLASLT_MATMUL_DESC_EPILOGUE, &epilogue, sizeof(epilogue)));
 
     cublas_check(cublasLtMatmulDescSetAttribute(desc, CUBLASLT_MATMUL_DESC_BIAS_POINTER, &bias, sizeof(bias)));
 
-    cublas_check(cublasLtMatrixLayoutCreate(&weight_layout, CUDA_R_32F, oc, column, oc));
+    cublas_check(cublasLtMatrixLayoutCreate(&weight_layout, CUDA_R_32F, column, oc, column));
     cublas_check(cublasLtMatrixLayoutCreate(&inp_layout, CUDA_R_32F, column, row, column));
     cublas_check(cublasLtMatrixLayoutCreate(&out_layout, CUDA_R_32F, oc, row, oc));
     cublas_check(cublasLtMatrixLayoutCreate(&bias_layout, CUDA_R_32F, oc, 1, oc));
@@ -460,8 +460,7 @@ void cuda_matmul_cublaslt(void *out, const void *inp, const void *weight, const 
     cublas_check(cublasLtMatmulAlgoGetHeuristic(cublaslt_handle, desc, weight_layout, inp_layout, out_layout,
                 out_layout, pref, 1, &heuristic, &res));
     if (res == 0)
-        panic("No algorithm found: row=%d, column=%d, oc=%d, has_bias=%d, has_gelu=%d",
-              row, column, oc, has_bias, has_gelu);
+        panic("No algorithm found: row=%d, column=%d, oc=%d, has_bias=%d", row, column, oc, has_bias);
 
     const float alpha = 1.0f, beta = 0.0f;
     cublas_check(cublasLtMatmul(cublaslt_handle, desc, &alpha, weight, weight_layout, inp, inp_layout, &beta,
@@ -476,7 +475,7 @@ void cuda_matmul_cublaslt(void *out, const void *inp, const void *weight, const 
 }
 
 /*
- * Fused matrix multiplication with optional bias addition: out = inp @ weight + bias
+ * Fused matrix multiplication with optional bias addition: out = inp @ weight^T + bias
  *
  * @param out: output matrix(row, oc)
  * @param inp: input matrix(row, column)

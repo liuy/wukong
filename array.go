@@ -211,19 +211,19 @@ func (r *cudaRunner) Matmul(a, b, bias *Array) (*Array, error) {
 	if a.Dims() < 2 || b.Dims() != 2 {
 		return nil, fmt.Errorf("arrays must have at least 2 dimensions")
 	}
-	if a.Shape[len(a.Shape)-1] != b.Shape[len(b.Shape)-2] {
+	if a.Shape[len(a.Shape)-1] != b.Shape[len(b.Shape)-1] {
 		return nil, fmt.Errorf("array shapes do not match")
 	}
 	var biasPtr unsafe.Pointer = nil
 	if bias != nil {
 		biasPtr = bias.dptr
-		if bias.Len() != b.Shape[len(b.Shape)-1] {
+		if bias.Len() != b.Shape[len(b.Shape)-2] {
 			return nil, fmt.Errorf("bias shape does not match")
 		}
 	}
 	column := a.Shape[len(a.Shape)-1]
 	row := a.Len() / column
-	oc := b.Shape[len(b.Shape)-1]
+	oc := b.Shape[len(b.Shape)-2]
 	out := C.cuda_malloc(C.size_t(row * oc * a.ElemSize()))
 	C.cuda_matmul(out, a.dptr, b.dptr, biasPtr, C.int(row), C.int(column), C.int(oc))
 	shape := a.Shape

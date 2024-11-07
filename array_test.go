@@ -195,18 +195,18 @@ func TestArrayMatmul(t *testing.T) {
 		expectError                      bool
 	}{
 		{
-			a: Shape{2, 3}, b: Shape{3, 2}, bias: Shape{2},
-			aData: []float32{1, 2, 3, 4, 5, 6}, bData: []float32{7, 8, 9, 10, 11, 12}, biasData: []float32{1, 1},
+			a: Shape{2, 3}, b: Shape{2, 3}, bias: Shape{2},
+			aData: []float32{1, 2, 3, 4, 5, 6}, bData: []float32{7, 9, 11, 8, 10, 12}, biasData: []float32{1, 1},
 			expected: []float32{59, 65, 140, 155}, expectError: false,
 		},
 		{
-			a: Shape{2, 3}, b: Shape{3, 2}, bias: Shape{},
-			aData: []float32{1, 2, 3, 4, 5, 6}, bData: []float32{7, 8, 9, 10, 11, 12}, biasData: nil,
+			a: Shape{2, 3}, b: Shape{2, 3}, bias: Shape{},
+			aData: []float32{1, 2, 3, 4, 5, 6}, bData: []float32{7, 9, 11, 8, 10, 12}, biasData: nil,
 			expected: []float32{58, 64, 139, 154}, expectError: false,
 		},
 		{
-			a: Shape{2, 2, 3}, b: Shape{3, 2}, bias: Shape{2},
-			aData: []float32{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12}, bData: []float32{13, 14, 15, 16, 17, 18}, biasData: []float32{1, 1},
+			a: Shape{2, 2, 3}, b: Shape{2, 3}, bias: Shape{2},
+			aData: []float32{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12}, bData: []float32{13, 15, 17, 14, 16, 18}, biasData: []float32{1, 1},
 			expected: []float32{95, 101, 230, 245, 365, 389, 500, 533}, expectError: false,
 		},
 		{
@@ -255,7 +255,7 @@ func TestArrayMatmulSoftmax(t *testing.T) {
 	if err != nil {
 		t.Fatalf("MakeArrayFrom() error = %v", err)
 	}
-	b, err := MakeArrayFrom(Shape{3, 3}, []float32{1, 2, 3, 4, 5, 6, 7, 8, 9})
+	b, err := MakeArrayFrom(Shape{3, 3}, []float32{1, 4, 7, 2, 5, 8, 3, 6, 9})
 	if err != nil {
 		t.Fatalf("MakeArrayFrom() error = %v", err)
 	}
