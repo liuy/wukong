@@ -294,3 +294,58 @@ TEST(Cuda, cuda_rmsnorm)
     cuda_free(d_inp);
     cuda_free(d_weight);
 }
+
+TEST(Cuda, cuda_swiglu)
+{
+    int batch = 2;
+    int row = 2;
+    int col = 3;
+    int hidden_size = 4;
+
+    float inp[batch * row * col] = {
+        0.1f, 0.2f, 0.3f,
+        0.4f, 0.5f, 0.6f,
+        0.1f, 0.2f, 0.3f,
+        0.4f, 0.5f, 0.6f
+    };
+
+    // Expected output tensor
+    float res[batch * row * hidden_size] = {
+        0.010485f, 0.059323f, 0.155615f, 0.306913f,
+        0.059323f, 0.405260f, 1.149139f, 2.347071f,
+        0.010485f, 0.059323f, 0.155615f, 0.306913f,
+        0.059323f, 0.405260f, 1.149139f, 2.347071f
+    };
+
+    // concatenate the weights
+    float weights_fc[2 * hidden_size * col] = {
+        0.1f, 0.2f, 0.3f,
+        0.4f, 0.5f, 0.6f,
+        0.7f, 0.8f, 0.9f,
+        1.0f, 1.1f, 1.2f,
+        0.1f, 0.2f, 0.3f,
+        0.4f, 0.5f, 0.6f,
+        0.7f, 0.8f, 0.9f,
+        1.0f, 1.1f, 1.2f
+    };
+    void *d_out = cuda_malloc(batch * row * hidden_size * sizeof(float));
+    void *d_inp = cuda_malloc(batch * row * col * sizeof(float));
+    void *d_fcout = cuda_malloc(batch * row * 2 * hidden_size * sizeof(float));
+    void *d_weights_fc = cuda_malloc(2 * hidden_size * col * sizeof(float));
+
+    cuda_to_device(d_inp, inp, batch * row * col * sizeof(float));
+    cuda_to_device(d_weights_fc, weights_fc, 2 * hidden_size * col * sizeof(float));
+
+    cuda_matmul(d_fcout, d_inp, d_weights_fc, nullptr, batch * row, col, 2 * hidden_size);
+    cuda_swiglu(d_out, d_fcout, batch, row, hidden_size);
+
+    float out[batch * row * hidden_size] = {0};
+    cuda_to_host(out, d_out, batch * row * hidden_size * sizeof(float));
+
+    assert_array_eq(res, out, batch * row * hidden_size);
+
+    cuda_free(d_out);
+    cuda_free(d_inp);
+    cuda_free(d_fcout);
+    cuda_free(d_weights_fc);
+}

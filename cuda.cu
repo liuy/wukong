@@ -344,6 +344,22 @@ __global__ void rmsnorm_kernel(float* __restrict__ out, const float* __restrict_
     }
 }
 
+__global__ void swiglu_kernel(floatX* out, const floatX* inp, int B, int T, int C)
+{
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if (idx < B * T * C) {
+        int b = idx / (T * C);
+        int t = (idx / C) % T;
+        int c = idx % C;
+
+        int fc1_idx = (b * T * 2 * C) + (t * 2 * C) + c;
+        int fc2_idx = fc1_idx + C;
+
+        floatX swish_val = inp[fc2_idx] / (1.0f + expf(-inp[fc2_idx]));
+        out[idx] = swish_val * inp[fc1_idx];
+    }
+}
+
 extern "C" {
 void cuda_init(void)
 {
@@ -630,6 +646,18 @@ void cuda_rmsnorm(void* out, const void* inp, const void* weight, int batch, int
     const int block_size = 256;
     const int N = batch * row;
     rmsnorm_kernel<<<N, block_size>>>((floatX *)out, (const floatX *)inp, (const floatX *)weight, N, col);
+    cuda_check(cudaGetLastError());
+}
+
+// swiglu: y = swish(fc2(x)) * fc1(x), where swish(x) = x / (1 + exp(-x)), fc1 and fc2 are fully connected layers
+// @param out: output matrix(batch, row, col)
+// @param inp: input matrix(batch, row, 2*col), concatenated fc1 and fc2 outputs along the last dimension
+void cuda_swiglu(void *out, const void *inp, int batch, int row, int col)
+{
+    int block_size = 256;
+    int grid_size = CEIL_DIV(batch * row * col, block_size);
+    swiglu_kernel<<<grid_size, block_size>>>((floatX *)out, (const floatX *)inp, batch, row, col);
+    cuda_check(cudaGetLastError());
 }
 
 }
