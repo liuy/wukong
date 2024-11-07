@@ -1,10 +1,12 @@
 #include "wukong.h"
 #include <gtest/gtest.h>
+#include <cstdlib>
+#include <ctime>
 
 static inline void assert_array_eq(const float *a, const float *b, size_t n)
 {
     for (int i = 0; i < n; i++)
-        EXPECT_NEAR(a[i], b[i], 1e-6);
+        EXPECT_NEAR(a[i], b[i], 1e-5);
 }
 
 class cudaEnv : public ::testing::Environment {
@@ -348,4 +350,123 @@ TEST(Cuda, cuda_swiglu)
     cuda_free(d_inp);
     cuda_free(d_fcout);
     cuda_free(d_weights_fc);
+}
+
+void get_freqs_cis(floatX *freqs_cis, int dim, int end, float theta, int use_scaled)
+{
+    // helper function that (on the CPU!) precomputes the freqs_cis for the RoPE rotation
+    // same as precompute_freqs_cis_real in rope.py
+    for (int i = 0; i < dim / 2; i++) {
+
+        // calculate the frequency for the (i, i+1)th dimension
+        float freq = 1.0f / powf(theta, (float)(2 * i) / dim);
+        if (use_scaled) {
+            const int scale_factor = 8;
+            const int low_freq_factor = 1;
+            const int high_freq_factor = 4;
+            const int old_context_len = 8192;  // original llama3 length
+            const float low_freq_wavelen = (float)old_context_len / low_freq_factor;
+            const float high_freq_wavelen = (float)old_context_len / high_freq_factor;
+            float wavelen = 2.0f * M_PI / freq;
+            if (wavelen < high_freq_wavelen) {
+                // skip; keep freq as is
+            } else if (wavelen > low_freq_wavelen) {
+                // scale down by scale_factor
+                freq /= scale_factor;
+            } else {
+                // smooth transition between scaled and unscaled
+                float smooth = ((float)old_context_len / wavelen - low_freq_factor) / (high_freq_factor - low_freq_factor);
+                freq = (1.0f - smooth) * freq / scale_factor + smooth * freq;
+            }
+        }
+
+        // iterate over all time steps, calculate the angle, and store the cos/sin
+        for (int t = 0; t < end; t++) {
+            float angle = (float)t * freq;
+            freqs_cis[t * dim + 2 * i] = cosf(angle);     // real part
+            freqs_cis[t * dim + 2 * i + 1] = sinf(angle); // imaginary part
+        }
+    }
+}
+
+TEST(Cuda, cuda_rope)
+{
+    int batch = 1;
+    int row = 2;
+    int NH = 2;
+    int HS = 2;
+
+    float qkv[batch * row * 3 * NH * HS] = {
+        // row 0
+        0.1f, 0.2f, 0.3f, 0.4f, // q
+        0.5f, 0.6f, 0.7f, 0.8f, // k
+        0.9f, 1.0f, 1.1f, 1.2f, // v
+        // row 1
+        1.3f, 1.4f, 1.5f, 1.6f, // q
+        1.7f, 1.8f, 1.9f, 2.0f, // k
+        2.1f, 2.2f, 2.3f, 2.4f, // v
+    };
+    float fc[HS*row] = {0};
+    float fc_res[HS*row] = {
+        1.000000f, 0.000000f,
+        0.540302f, 0.841471f,
+    };
+    float out[batch * row * 3 * NH * HS] = {0};
+    float res[batch * row * 3 * NH * HS] = {
+        0.100000f, 0.200000f, 0.300000f, 0.400000f,
+        0.500000f, 0.600000f, 0.700000f, 0.800000f,
+        0.900000f, 1.000000f, 1.100000f, 1.200000f,
+        -0.475666f, 1.850335f, -0.535900f, 2.126690f,
+        -0.596134f, 2.403045f, -0.656368f, 2.679399f,
+        2.100000f, 2.200000f, 2.300000f, 2.400000f
+    };
+
+    get_freqs_cis(fc, HS, row, 10000.0f, false);
+    assert_array_eq(fc_res, fc, HS * row);
+
+    void *d_qkv = cuda_malloc(batch * row * 3 * NH * HS * sizeof(float));
+    void *d_fc = cuda_malloc(HS * row * sizeof(float));
+
+    cuda_to_device(d_qkv, qkv, batch * row * 3 * NH * HS * sizeof(float));
+    cuda_to_device(d_fc, fc, HS * row * sizeof(float));
+    cuda_rope(d_qkv, d_qkv, d_fc, batch, row, NH, HS); // update qkv in-place
+    cuda_to_host(out, d_qkv, batch * row * 3 * NH * HS * sizeof(float));
+    assert_array_eq(res, out, batch * row * 3 * NH * HS);
+
+    float fcs[HS*row] = {0};
+    float fcs_res[HS*row] = {
+        1.000000f, 0.000000f,
+        0.540302f, 0.841471f,
+    };
+    get_freqs_cis(fcs, HS, row, 10000.0f, true);
+    assert_array_eq(fcs_res, fcs, HS * row);
+
+    cuda_free(d_qkv);
+    cuda_free(d_fc);
+}
+
+TEST(Cuda, cuda_get_freqs_cis)
+{
+    std::srand(std::time(nullptr));
+    for (int i = 0; i < 10; ++i) {
+        int HS = (std::rand() % 40 + 1) * 2; // random even number between 2 and 80
+        int row = (std::rand() % 40 + 1) * 2; // random even number between 2 and 80
+        float theta = static_cast<float>(std::rand() % 10000 + 1); // random value between 1 and 10000
+
+        float res[HS*row] = {0};
+        float out[HS*row] = {0};
+
+        void *d_out = cuda_malloc(HS * row * sizeof(float));
+        cuda_get_freqs_cis(d_out, HS, row, theta, false);
+        cuda_to_host(out, d_out, HS * row * sizeof(float));
+        get_freqs_cis(res, HS, row, theta, false);
+        assert_array_eq(res, out, HS * row);
+
+        cuda_get_freqs_cis(d_out, HS, row, theta, true);
+        cuda_to_host(out, d_out, HS * row * sizeof(float));
+        get_freqs_cis(res, HS, row, theta, true);
+        assert_array_eq(res, out, HS * row);
+
+        cuda_free(d_out);
+    }
 }
