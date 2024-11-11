@@ -7,12 +7,12 @@ static cublasComputeType_t cublas_compute_type;
 static cublasLtHandle_t cublaslt_handle;
 static cublasHandle_t cublas_handle;
 static cudnnHandle_t cudnn_handle;
-static int cuda_arch_major = 0;
-static int cuda_arch_minor = 0;
-static int cuda_num_SMs = 0; // for persistent threads where we want 1 threadblock per SM
-static int cuda_threads_per_SM = 0;    // needed to calculate how many blocks to launch to fill up the GPU
-static int cuda_threads_per_block = 0;
-static int cuda_warp_size = 0; // warp size of the GPU
+__attribute_maybe_unused__ static int cuda_arch_major = 0;
+__attribute_maybe_unused__ static int cuda_arch_minor = 0;
+__attribute_maybe_unused__ static int cuda_num_SMs = 0; // for persistent threads where we want 1 threadblock per SM
+__attribute_maybe_unused__ static int cuda_threads_per_SM = 0;    // needed to calculate how many blocks to launch to fill up the GPU
+__attribute_maybe_unused__ static int cuda_threads_per_block = 0;
+__attribute_maybe_unused__ static int cuda_warp_size = 0; // warp size of the GPU
 
 __device__ float warpReduceSum(float val) {
     for (int offset = 16; offset > 0; offset /= 2) {
@@ -443,8 +443,8 @@ void cuda_init(void)
     cuda_arch_minor = deviceProp.minor;
     cuda_threads_per_block = deviceProp.maxThreadsPerBlock;
     cuda_warp_size = deviceProp.warpSize;
-    printf("CUDA device: %s, major %d, minor %d, num_SMs: %d, threads_per_SM: %d, threads_per_block: %d, warp_size: %d\n",
-           deviceProp.name, cuda_arch_major, cuda_arch_minor, cuda_num_SMs, cuda_threads_per_SM, cuda_threads_per_block, cuda_warp_size);
+    // printf("CUDA device: %s, major %d, minor %d, num_SMs: %d, threads_per_SM: %d, threads_per_block: %d, warp_size: %d\n",
+    //        deviceProp.name, cuda_arch_major, cuda_arch_minor, cuda_num_SMs, cuda_threads_per_SM, cuda_threads_per_block, cuda_warp_size);
 
     cudnn_check(cudnnCreate(&cudnn_handle));
     cublas_check(cublasCreate(&cublas_handle));

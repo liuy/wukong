@@ -31,7 +31,6 @@ func BenchmarkTokenizer(b *testing.B) {
 	if err != nil {
 		b.Fatalf("NewTokenizer() error = %v", err)
 	}
-	// open the shakespeare.txt file and assign the content to the variable text
 	file, err := os.Open("shakespeare.txt")
 	if err != nil {
 		b.Fatalf("os.Open() error = %v", err)
