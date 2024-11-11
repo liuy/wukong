@@ -68,92 +68,125 @@ func loadTokenBpe(vocabFilePath string) (map[string]int, error) {
 }
 
 func (t *Tokenizer) BytePairMerge(piece string) []int {
-	// Ported from Tiktoken Rust code
-	// See: https://github.com/openai/tiktoken/blob/1b9faf2779855124f05174adf1383e53689ed94b/src/lib.rs
-	type rankTuple struct {
+	parts := make([]struct {
 		rank int
 		idx  int
-	}
-	parts := make([]rankTuple, len(piece)+1)
-	min_rank := rankTuple{rank: math.MaxInt32, idx: math.MaxInt32}
-	for i := 0; i < len(piece)-1; i++ {
-		var rank int
-		var ok bool
-		if i+1 < len(piece) {
-			if rank, ok = t.TokenToId[piece[i:i+2]]; !ok {
-				rank = math.MaxInt32
-			}
-		} else {
-			rank = math.MaxInt32
-		}
-		if rank < min_rank.rank {
-			min_rank = rankTuple{rank: rank, idx: i}
-		}
-		parts[i] = rankTuple{rank: rank, idx: i}
-	}
-	parts[len(piece)-1] = rankTuple{rank: math.MaxInt32, idx: len(piece) - 1}
-	parts[len(piece)] = rankTuple{rank: math.MaxInt32, idx: len(piece)}
+	}, len(piece)+1)
 
-	getRankFn := func(parts []rankTuple, i int) int {
-		var newRank int
-		var ok bool
-		if i+3 < len(parts) {
-			pieceToSearch := piece[parts[i].idx:parts[i+3].idx]
-			if newRank, ok = t.TokenToId[pieceToSearch]; !ok {
-				newRank = math.MaxInt32
+	minRank := math.MaxInt32
+	minIdx := 0
+	strLen := len(piece)
+
+	// Initial ranking pass
+	for i := 0; i < strLen-1; i++ {
+		rank := math.MaxInt32
+
+		// Check if we have a valid 2-byte sequence
+		if i+1 < strLen {
+			key := piece[i : i+2]
+			if r, ok := t.TokenToId[key]; ok {
+				rank = r
 			}
-		} else {
-			newRank = math.MaxInt32
 		}
-		return newRank
+
+		if rank < minRank {
+			minRank = rank
+			minIdx = i
+		}
+		parts[i].rank = rank
+		parts[i].idx = i
 	}
 
-	for min_rank.rank != math.MaxInt32 {
-		i := min_rank.idx
+	// Set sentinel values
+	parts[strLen-1].rank = math.MaxInt32
+	parts[strLen-1].idx = strLen - 1
+	parts[strLen].rank = math.MaxInt32
+	parts[strLen].idx = strLen
+
+	getRankFn := func(parts []struct{ rank, idx int }, i int) int {
+		if i+3 >= len(parts) {
+			return math.MaxInt32
+		}
+
+		pieceToSearch := piece[parts[i].idx:parts[i+3].idx]
+		if rank, ok := t.TokenToId[pieceToSearch]; ok {
+			return rank
+		}
+		return math.MaxInt32
+	}
+
+	// Main merge loop
+	partsLen := len(piece) + 1
+	for minRank != math.MaxInt32 {
+		i := minIdx
+		// Update ranks
 		// Update parts[i] and parts[i - 1] before removing parts[i + 1], since
 		// `parts.remove(i + 1)` will thrash the cache.
 		if i > 0 {
-			parts[i-1].rank = getRankFn(parts, i-1)
+			parts[i-1].rank = getRankFn(parts[:partsLen], i-1)
 		}
-		parts[i].rank = getRankFn(parts, i)
-		parts = append(parts[:i+1], parts[i+1+1:]...) // remove parts[i + 1]
+		parts[i].rank = getRankFn(parts[:partsLen], i)
 
-		min_rank = rankTuple{rank: math.MaxInt32, idx: math.MaxInt}
-		for i = 0; i < len(parts)-1; i++ {
-			if parts[i].rank < min_rank.rank {
-				min_rank = rankTuple{rank: parts[i].rank, idx: i}
+		// Remove parts[i + 1]
+		copy(parts[i+1:partsLen-1], parts[i+2:partsLen])
+		partsLen--
+
+		// Find new minimum
+		minRank = math.MaxInt32
+		for j := 0; j < partsLen-1; j++ {
+			if parts[j].rank < minRank {
+				minRank = parts[j].rank
+				minIdx = j
 			}
 		}
 	}
 
-	splitRanks := make([]int, 0)
-	for i := 0; i < len(parts)-1; i++ {
-		subPiece := piece[parts[i].idx:parts[i+1].idx]
-		splitRanks = append(splitRanks, t.TokenToId[subPiece])
+	// Build result
+	result := make([]int, 0, partsLen-1)
+	for i := 0; i < partsLen-1; i++ {
+		start := parts[i].idx
+		end := parts[i+1].idx
+		key := piece[start:end]
+		result = append(result, t.TokenToId[key])
 	}
-	return splitRanks
+
+	return result
 }
 
+// Convert text to a sequence of token IDs
 func (t *Tokenizer) Encode(text string) []int {
-	ids := make([]int, 0)
+	estimatedTokens := len(text) / 4
+	ids := make([]int, 0, estimatedTokens)
 
-	for _, match := range t.Pattern.FindAllStringSubmatch(text, -1) {
-		if id, ok := t.TokenToId[match[0]]; ok {
+	matches := t.Pattern.FindAllStringSubmatchIndex(text, -1)
+	for _, match := range matches {
+		start, end := match[0], match[1]
+		piece := text[start:end]
+
+		if id, ok := t.TokenToId[piece]; ok { // First check if the piece is in the vocabulary
 			ids = append(ids, id)
-			continue
+		} else { // Otherwise, split the piece into subtokens by BPE
+			splitIds := t.BytePairMerge(piece)
+			ids = append(ids, splitIds...)
 		}
-		splitIds := t.BytePairMerge(match[0])
-		ids = append(ids, splitIds...)
 	}
+
 	return ids
 }
 
+// Convert a sequence of token IDs to text
 func (t *Tokenizer) Decode(ids []int) string {
-	text := ""
+	// Assuming average token length of 4 characters as an estimation
+	capacity := len(ids) * 4
+
+	var sb strings.Builder
+	sb.Grow(capacity)
+
 	for _, id := range ids {
-		text += t.IdToToken[id]
+		sb.WriteString(t.IdToToken[id])
 	}
-	return text
+
+	return sb.String()
 }
 
 func (t *Tokenizer) EncodeHeader(message map[string]string) []int {

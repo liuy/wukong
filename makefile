@@ -11,6 +11,9 @@ test:
 	@make wukong
 	@go test -v ./...
 
+bench:
+	@go test -bench=. -benchmem ./...
+
 clean:
 	@rm -rf build
 	@echo "clean done"
