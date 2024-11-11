@@ -12,6 +12,7 @@ test:
 	@go test -v ./...
 
 bench:
+	@cmake -B build && cmake --build build -t wukong
 	@go test -bench=. -benchmem ./...
 
 clean:
