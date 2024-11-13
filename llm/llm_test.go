@@ -57,3 +57,19 @@ func BenchmarkTokenizer(b *testing.B) {
 		b.Fatalf("text != tok.Decode(ids)")
 	}
 }
+
+func TestGGUFParser(t *testing.T) {
+	gguf, err := GGUFParser("test_data/ggml-vocab-gpt-2.gguf")
+	if err != nil {
+		t.Fatalf("GGUFParser() error = %v", err)
+	}
+	if gguf.Header.KVCount != 16 || gguf.Header.TensorCount != 0 {
+		t.Errorf("GGUFFile.Header = %v, want KVCount = 16, TensorCount = 0", gguf.Header)
+	}
+	if gguf.KVs["gpt2.context_length"].(uint32) != 1024 {
+		t.Errorf("Got gtp2.context_length:%d, want 1024", gguf.KVs["gpt2.context_length"])
+	}
+	if len(gguf.KVs["tokenizer.ggml.tokens"].([]string)) != 50257 {
+		t.Errorf("Got len(tokenizer.ggml.tokens):%d, want 50257", len(gguf.KVs["tokenizer.ggml.tokens"].([]string)))
+	}
+}
