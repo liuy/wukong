@@ -8,10 +8,11 @@ import (
 )
 
 func TestTokenizer(t *testing.T) {
-	tok, err := NewTokenizer("./llama3_tokenizer.model", &Llama3Handler{})
+	toks, err := getTokensFrom("test_data/llama3_tokenizer.model")
 	if err != nil {
 		t.Error(err)
 	}
+	tok := NewTokenizer(toks, &Llama3Handler{})
 	expected := 128256
 	if tok.VocabSize != expected {
 		t.Errorf("Tokenizer.VocabSize = %d, want %d", tok.VocabSize, expected)
@@ -27,10 +28,11 @@ func TestTokenizer(t *testing.T) {
 }
 
 func BenchmarkTokenizer(b *testing.B) {
-	tok, err := NewTokenizer("./llama3_tokenizer.model", &Llama3Handler{})
+	toks, err := getTokensFrom("test_data/llama3_tokenizer.model")
 	if err != nil {
-		b.Fatalf("NewTokenizer() error = %v", err)
+		b.Error(err)
 	}
+	tok := NewTokenizer(toks, &Llama3Handler{})
 	file, err := os.Open("shakespeare.txt")
 	if err != nil {
 		b.Fatalf("os.Open() error = %v", err)
@@ -59,17 +61,35 @@ func BenchmarkTokenizer(b *testing.B) {
 }
 
 func TestGGUFParser(t *testing.T) {
-	gguf, err := GGUFParser("test_data/ggml-vocab-gpt-2.gguf")
+	toks, err := getTokensFrom("test_data/llama3_tokenizer.model")
+	if err != nil {
+		t.Error(err)
+	}
+	tok1 := NewTokenizer(toks, &Llama3Handler{})
+
+	gguf, err := GGUFParser("test_data/ggml-vocab-llama-bpe.gguf")
 	if err != nil {
 		t.Fatalf("GGUFParser() error = %v", err)
 	}
-	if gguf.Header.KVCount != 16 || gguf.Header.TensorCount != 0 {
-		t.Errorf("GGUFFile.Header = %v, want KVCount = 16, TensorCount = 0", gguf.Header)
+	tokens := gguf.GetTokensMap()
+	tok2 := NewTokenizer(tokens, &Llama3Handler{})
+	for i := 0; i < 12800; i++ {
+		if tok1.IdToToken[i] != tok2.IdToToken[i] {
+			t.Fatalf("Found mismatch: %d:  %v, %v\n", i, tok1.IdToToken[i], tok2.IdToToken[i])
+		}
 	}
-	if gguf.KVs["gpt2.context_length"].(uint32) != 1024 {
-		t.Errorf("Got gtp2.context_length:%d, want 1024", gguf.KVs["gpt2.context_length"])
-	}
-	if len(gguf.KVs["tokenizer.ggml.tokens"].([]string)) != 50257 {
-		t.Errorf("Got len(tokenizer.ggml.tokens):%d, want 50257", len(gguf.KVs["tokenizer.ggml.tokens"].([]string)))
+	text := "\"The Matrix is everywhere. It's all around us, even now in this very room. " +
+		"You can see it when you look out your window or when you turn on your television. " +
+		"You can feel it when you go to work... when you go to church... when you pay your taxes. " +
+		"It is the world that has been pulled over your eyes to blind you from the truth.\" - 摩菲斯解释矩阵的本质。"
+	ids2 := tok2.Encode(text)
+	expected := []int{10227, 11892, 374, 17277, 13, 1102, 596, 682, 2212, 603, 11, 1524, 1457, 304,
+		420, 1633, 3130, 13, 1472, 649, 1518, 433, 994, 499, 1427, 704, 701, 3321, 477, 994, 499, 2543,
+		389, 701, 12707, 13, 1472, 649, 2733, 433, 994, 499, 733, 311, 990, 1131, 994, 499, 733, 311,
+		8993, 1131, 994, 499, 2343, 701, 13426, 13, 1102, 374, 279, 1917, 430, 706, 1027, 13541, 927,
+		701, 6548, 311, 18507, 499, 505, 279, 8206, 1210, 482, 122901, 102, 112789, 101011, 50338, 69962,
+		100543, 102, 113400, 9554, 22656, 103706, 1811}
+	if !slices.Equal(expected, ids2) {
+		t.Errorf("Tokenizer.Encode() = %v, want %v", ids2, expected)
 	}
 }

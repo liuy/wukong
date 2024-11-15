@@ -12,7 +12,7 @@ import (
 )
 
 type ModelHandler interface {
-	Initialize(t *Tokenizer, path string) error
+	Initialize(t *Tokenizer, toks map[string]int)
 	EncodeHeader(t *Tokenizer, message map[string]string) []int
 	EncodeContent(t *Tokenizer, message map[string]string) []int
 }
@@ -31,14 +31,11 @@ type Tokenizer struct {
 	ModelHandler
 }
 
-func NewTokenizer(path string, m ModelHandler) (*Tokenizer, error) {
+func NewTokenizer(tokens map[string]int, m ModelHandler) *Tokenizer {
 	tokenizer := &Tokenizer{}
 	tokenizer.ModelHandler = m
-	err := tokenizer.Initialize(path)
-	if err != nil {
-		return nil, err
-	}
-	return tokenizer, nil
+	tokenizer.Initialize(tokens)
+	return tokenizer
 }
 
 func loadTokenBpe(vocabFilePath string) (map[string]int, error) {
@@ -203,6 +200,6 @@ func (t *Tokenizer) EncodeContent(message map[string]string) []int {
 	return t.ModelHandler.EncodeContent(t, message)
 }
 
-func (t *Tokenizer) Initialize(path string) error {
-	return t.ModelHandler.Initialize(t, path)
+func (t *Tokenizer) Initialize(toks map[string]int) {
+	t.ModelHandler.Initialize(t, toks)
 }

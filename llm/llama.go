@@ -8,15 +8,16 @@ import (
 
 type Llama3Handler struct{}
 
-func (m *Llama3Handler) Initialize(toker *Tokenizer, path string) error {
+func getTokensFrom(path string) (map[string]int, error) {
 	mergeableTokens, err := loadTokenBpe(path)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	mergeableCount := len(mergeableTokens)
 
 	reservedSpecialTokensCount := 256
 
+	tokens := make(map[string]int, mergeableCount+reservedSpecialTokensCount)
 	specialTokensArr := []string{
 		"<|begin_of_text|>",
 		"<|end_of_text|>",
@@ -37,36 +38,31 @@ func (m *Llama3Handler) Initialize(toker *Tokenizer, path string) error {
 	}
 	specialTokensArr = append(specialTokensArr, reservedTokensArr...)
 
-	toker.TokenToId = make(map[string]int)
-	toker.IdToToken = make([]string, mergeableCount+reservedSpecialTokensCount)
-
-	specialTokens := make(map[string]int)
-	for i, token := range specialTokensArr {
-		specialTokens[token] = mergeableCount + i
+	for id, t := range specialTokensArr {
+		tokens[t] = mergeableCount + id
 	}
 
-	for token, id := range mergeableTokens {
-		toker.TokenToId[token] = id
+	for t, id := range mergeableTokens {
+		tokens[t] = id
 	}
-	for token, id := range specialTokens {
+	return tokens, nil
+}
+
+func (m *Llama3Handler) Initialize(toker *Tokenizer, toks map[string]int) {
+	toker.TokenToId = make(map[string]int, len(toks))
+	toker.IdToToken = make([]string, len(toks))
+	for token, id := range toks {
 		toker.TokenToId[token] = id
-	}
-	for token, id := range mergeableTokens {
 		toker.IdToToken[id] = token
 	}
-	for token, id := range specialTokens {
-		toker.IdToToken[id] = token
-	}
-
-	toker.VocabSize = mergeableCount + reservedSpecialTokensCount
-	toker.BosId = specialTokens["<|begin_of_text|>"]
-	toker.EosId = specialTokens["<|end_of_text|>"]
-	toker.EomId = specialTokens["<|eom_id|>"]
-	toker.EotId = specialTokens["<|eot_id|>"]
+	toker.VocabSize = len(toks)
+	toker.BosId = toks["<|begin_of_text|>"]
+	toker.EosId = toks["<|end_of_text|>"]
+	toker.EomId = toks["<|eom_id|>"]
+	toker.EotId = toks["<|eot_id|>"]
 	toker.PadId = -1
 	toker.UnknownId = -1
 	toker.Pattern = regexp.MustCompile(`(?i:'s|'t|'re|'ve|'m|'ll|'d)|[^\r\n\p{L}\p{N}]?\p{L}+|\p{N}{1,3}| ?[^\s\p{L}\p{N}]+[\r\n]*|\s*[\r\n]+|\s+`)
-	return nil
 }
 
 // <|begin_of_text|><|start_header_id|>role<|end_header_id|>\n\n

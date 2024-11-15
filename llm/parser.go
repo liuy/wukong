@@ -482,7 +482,7 @@ func (g *GGUFFile) Format(st fmt.State, r rune) {
 	for k, v := range g.KVs {
 		if k == "tokenizer.ggml.tokens" || k == "tokenizer.ggml.scores" || k == "tokenizer.ggml.token_type" ||
 			k == "tokenizer.ggml.merges" || k == "tokenizer.chat_template" {
-			continue
+			s += fmt.Sprintf("%s: not printed\n", k)
 		} else {
 			s += fmt.Sprintf("%s: %v\n", k, v)
 		}
@@ -495,4 +495,91 @@ func (g *GGUFFile) Format(st fmt.State, r rune) {
 		s += fmt.Sprintf("%d], Quant: %d\n", info.Dims[info.NumDims-1], info.Type)
 	}
 	fmt.Fprint(st, s)
+}
+
+var unicodeToByteMap = buildUnicodeToByteMap()
+
+func buildUnicodeToByteMap() map[uint16]byte {
+	reverseMap := make(map[uint16]byte, 256)
+	// ASCII characters from '!' to '~'
+	for b := byte('!'); b <= '~'; b++ {
+		reverseMap[uint16(b)] = b
+	}
+	// Latin-1 Supplement characters from '¡' to '¬' and '®' to 'ÿ'
+	for b := uint16(0xA1); b <= 0xFF; b++ {
+		if b != 0xAD { // Skip 0xAD
+			reverseMap[b] = byte(b)
+		}
+	}
+	// Additional mappings
+	n := 0
+	for b := 0; b < 256; b++ {
+		if b < int('!') ||
+			(b > int('~') && b < 0xA1) ||
+			b == 0xAD {
+			reverseMap[uint16(256+n)] = byte(b)
+			n++
+		}
+	}
+	return reverseMap
+}
+
+// unicodeToBytes translates encoded bytes back to their original form based on the bytes_to_unicode() mapping
+// https://github.com/openai/gpt-2/blob/master/src/encoder.py#L9
+func unicodeToBytes(tokens []string) error {
+	for idx, str := range tokens {
+		data := []byte(str)
+		length := len(data)
+
+		processed := make([]byte, 0, length)
+
+		for i := 0; i < length; {
+			// Fast path for ASCII characters
+			if data[i] < 128 {
+				if orig, ok := unicodeToByteMap[uint16(data[i])]; ok {
+					processed = append(processed, orig)
+				} else {
+					processed = append(processed, data[i])
+				}
+				i++
+				continue
+			}
+			// Handle two-byte UTF-8 sequence
+			if i+1 < length && data[i] >= 194 && data[i] <= 197 {
+				charCode := uint16(((uint16(data[i])-194)*64 + uint16(data[i+1])))
+				if orig, ok := unicodeToByteMap[charCode]; ok {
+					processed = append(processed, orig)
+				} else {
+					return fmt.Errorf("invalid character code: %d at position %d in string %d", charCode, i, idx)
+				}
+				i += 2
+			} else {
+				// Handle single byte non-ASCII character
+				if orig, ok := unicodeToByteMap[uint16(data[i])]; ok {
+					processed = append(processed, orig)
+				} else {
+					processed = append(processed, data[i])
+				}
+				i++
+			}
+		}
+		tokens[idx] = string(processed)
+	}
+	return nil
+}
+
+func (g *GGUFFile) GetTokensMap() map[string]int {
+	tokenList := g.KVs["tokenizer.ggml.tokens"].([]string)
+	tokens := make(map[string]int, len(tokenList))
+	isGPT2 := g.KVs["tokenizer.ggml.model"] == "gpt2"
+
+	if isGPT2 {
+		if err := unicodeToBytes(tokenList); err != nil {
+			panic(err)
+		}
+	}
+	for i, token := range tokenList {
+		tokens[token] = i
+	}
+	return tokens
 }
