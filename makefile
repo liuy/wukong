@@ -11,9 +11,14 @@ test:
 	@make wukong
 	@go test -v ./...
 
+# run all the benchmarks
 bench:
 	@cmake -B build && cmake --build build -t wukong
-	@go test -bench=. -benchmem ./...
+	@go test -run=^$$ -bench=. -benchmem ./...
+# for specific benchmark: `make bench-foo`
+bench-%:
+	@cmake -B build && cmake --build build -t wukong
+	@go test -run=^$$ -bench=$* -benchmem ./...
 
 clean:
 	@rm -rf build
