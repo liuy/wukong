@@ -501,10 +501,7 @@ var unicodeToByteMap = buildUnicodeToByteMap()
 
 func buildUnicodeToByteMap() map[uint16]byte {
 	reverseMap := make(map[uint16]byte, 256)
-	// ASCII characters from '!' to '~'
-	for b := byte('!'); b <= '~'; b++ {
-		reverseMap[uint16(b)] = b
-	}
+	// ASCII characters from '!' to '~' is identity-mapped, no need to add them
 	// Latin-1 Supplement characters from '¡' to '¬' and '®' to 'ÿ'
 	for b := uint16(0xA1); b <= 0xFF; b++ {
 		if b != 0xAD { // Skip 0xAD
@@ -538,7 +535,7 @@ func unicodeToBytes(tokens []string) error {
 			if i+1 < length && data[i] >= 194 && data[i] <= 197 {
 				charCode := uint16(((uint16(data[i])-194)*64 + uint16(data[i+1])))
 				if orig, ok := unicodeToByteMap[charCode]; ok {
-					// fmt.Printf("%d, charCode: %d, orig: %d, data: %v\n", idx, charCode, orig, data)
+					// fmt.Printf("%d, [%d, %d] -> %d\n", idx, data[i], data[i+1], orig)
 					processed = append(processed, orig)
 				} else {
 					panic(fmt.Sprintf("invalid character code: %d at position %d at %d", charCode, i, idx))
@@ -549,6 +546,7 @@ func unicodeToBytes(tokens []string) error {
 				i++
 			}
 		}
+		// fmt.Printf("%d, %s -> %s\n", idx, str, processed)
 		tokens[idx] = string(processed)
 	}
 	return nil
