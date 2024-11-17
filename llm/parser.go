@@ -534,32 +534,18 @@ func unicodeToBytes(tokens []string) error {
 		processed := make([]byte, 0, length)
 
 		for i := 0; i < length; {
-			// Fast path for ASCII characters
-			if data[i] < 128 {
-				if orig, ok := unicodeToByteMap[uint16(data[i])]; ok {
-					processed = append(processed, orig)
-				} else {
-					processed = append(processed, data[i])
-				}
-				i++
-				continue
-			}
-			// Handle two-byte UTF-8 sequence
+			// Handle two-byte UTF-8 sequence ranging from 0xc2(194) to 0xc5(197)
 			if i+1 < length && data[i] >= 194 && data[i] <= 197 {
 				charCode := uint16(((uint16(data[i])-194)*64 + uint16(data[i+1])))
 				if orig, ok := unicodeToByteMap[charCode]; ok {
+					// fmt.Printf("%d, charCode: %d, orig: %d, data: %v\n", idx, charCode, orig, data)
 					processed = append(processed, orig)
 				} else {
-					return fmt.Errorf("invalid character code: %d at position %d in string %d", charCode, i, idx)
+					panic(fmt.Sprintf("invalid character code: %d at position %d at %d", charCode, i, idx))
 				}
 				i += 2
 			} else {
-				// Handle single byte non-ASCII character
-				if orig, ok := unicodeToByteMap[uint16(data[i])]; ok {
-					processed = append(processed, orig)
-				} else {
-					processed = append(processed, data[i])
-				}
+				processed = append(processed, data[i])
 				i++
 			}
 		}
@@ -574,9 +560,7 @@ func (g *GGUFFile) GetTokensMap() map[string]int {
 	isGPT2 := g.KVs["tokenizer.ggml.model"] == "gpt2"
 
 	if isGPT2 {
-		if err := unicodeToBytes(tokenList); err != nil {
-			panic(err)
-		}
+		unicodeToBytes(tokenList)
 	}
 	for i, token := range tokenList {
 		tokens[token] = i

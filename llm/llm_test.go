@@ -93,3 +93,13 @@ func TestGGUFParser(t *testing.T) {
 		t.Errorf("Tokenizer.Encode() = %v, want %v", ids2, expected)
 	}
 }
+
+func BenchmarkGGUFParser(b *testing.B) {
+	for i := 0; i < b.N; i++ {
+		gguf, err := GGUFParser("test_data/ggml-vocab-llama-bpe.gguf")
+		if err != nil {
+			b.Fatalf("GGUFParser() error = %v", err)
+		}
+		gguf.GetTokensMap()
+	}
+}
