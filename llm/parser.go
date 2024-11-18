@@ -523,7 +523,7 @@ func buildUnicodeToByteMap() map[uint16]byte {
 
 // unicodeToBytes translates encoded bytes back to their original form based on the bytes_to_unicode() mapping
 // https://github.com/openai/gpt-2/blob/master/src/encoder.py#L9
-func unicodeToBytes(tokens []string) error {
+func unicodeToBytes(tokens []string) {
 	for idx, str := range tokens {
 		data := []byte(str)
 		length := len(data)
@@ -549,19 +549,18 @@ func unicodeToBytes(tokens []string) error {
 		// fmt.Printf("%d, %s -> %s\n", idx, str, processed)
 		tokens[idx] = string(processed)
 	}
-	return nil
 }
 
 func (g *GGUFFile) GetTokensMap() map[string]int {
-	tokenList := g.KVs["tokenizer.ggml.tokens"].([]string)
-	tokens := make(map[string]int, len(tokenList))
+	tokens := g.KVs["tokenizer.ggml.tokens"].([]string)
+	tm := make(map[string]int, len(tokens))
 	isGPT2 := g.KVs["tokenizer.ggml.model"] == "gpt2"
 
 	if isGPT2 {
-		unicodeToBytes(tokenList)
+		unicodeToBytes(tokens)
 	}
-	for i, token := range tokenList {
-		tokens[token] = i
+	for i, t := range tokens {
+		tm[t] = i
 	}
-	return tokens
+	return tm
 }
