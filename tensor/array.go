@@ -71,19 +71,14 @@ func (s Shape) Dims() int { return len(s) }
 func (s Shape) IsScalar() bool { return s.Dims() == 0 }
 
 func (s Shape) Format(st fmt.State, r rune) {
-	switch r {
-	case 'v', 's':
-		st.Write([]byte("("))
-		for i, v := range s {
-			fmt.Fprintf(st, "%d", v)
-			if i < len(s)-1 {
-				st.Write([]byte(", "))
-			}
+	st.Write([]byte("("))
+	for i, v := range s {
+		fmt.Fprintf(st, "%d", v)
+		if i < len(s)-1 {
+			st.Write([]byte(", "))
 		}
-		st.Write([]byte(")"))
-	default:
-		fmt.Fprintf(st, "%v", []int(s))
 	}
+	st.Write([]byte(")"))
 }
 
 func NewArray(s Shape, t reflect.Type) *Array {
