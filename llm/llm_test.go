@@ -27,6 +27,50 @@ func TestTokenizer(t *testing.T) {
 	}
 }
 
+func TestTokenizerEncode(t *testing.T) {
+	toks, err := getTokensFrom("test_data/llama3_tokenizer.model")
+	if err != nil {
+		t.Error(err)
+	}
+	tok := NewTokenizer(toks, &Llama3Handler{})
+	text := "\t\tname"
+	ids := tok.Encode(text)
+	expectedIds := []int{197, 11870}
+	if !slices.Equal(expectedIds, ids) {
+		t.Errorf("Tokenizer.Encode() = %v, want %v", ids, expectedIds)
+	}
+	text = "  中国\t 重庆"
+	ids = tok.Encode(text)
+	expectedIds = []int{220, 107637, 197, 109367, 110736}
+	if !slices.Equal(expectedIds, ids) {
+		t.Errorf("Tokenizer.Encode() = %v, want %v", ids, expectedIds)
+	}
+	text = "My     name is \twukong. What's your\t name?"
+	ids = tok.Encode(text)
+	expectedIds = []int{5159, 257, 836, 374, 220, 6831, 3178, 647, 13, 3639, 596, 701, 197, 836, 30}
+	if !slices.Equal(expectedIds, ids) {
+		t.Errorf("Tokenizer.Encode() = %v, want %v", ids, expectedIds)
+	}
+	text = "   .\t\t\t"
+	ids = tok.Encode(text)
+	expectedIds = []int{256, 662, 573}
+	if !slices.Equal(expectedIds, ids) {
+		t.Errorf("Tokenizer.Encode() = %v, want %v", ids, expectedIds)
+	}
+	text = "   123"
+	ids = tok.Encode(text)
+	expectedIds = []int{256, 220, 4513}
+	if !slices.Equal(expectedIds, ids) {
+		t.Errorf("Tokenizer.Encode() = %v, want %v", ids, expectedIds)
+	}
+	text = "\t123"
+	ids = tok.Encode(text)
+	expectedIds = []int{197, 4513}
+	if !slices.Equal(expectedIds, ids) {
+		t.Errorf("Tokenizer.Encode() = %v, want %v", ids, expectedIds)
+	}
+}
+
 func BenchmarkTokenizer(b *testing.B) {
 	toks, err := getTokensFrom("test_data/llama3_tokenizer.model")
 	if err != nil {

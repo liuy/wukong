@@ -162,7 +162,17 @@ func (t *Tokenizer) Encode(text string) []int {
 	ids := make([]int, 0, estimatedTokens)
 
 	matches := t.Pattern.FindAllStringSubmatchIndex(text, -1)
-	for _, match := range matches {
+	for i, match := range matches {
+		isSpaceOrTab := func(b byte) bool {
+			return b == ' ' || b == '\t'
+		}
+		// mimic lookahead \s+(?!\S) since Go's regexp doesn't support it
+		if isSpaceOrTab(text[match[1]-1]) && match[1]-match[0] > 1 && i+1 < len(matches) {
+			next := matches[i+1]
+			// move the tail whitespace of current match to the next match
+			next[0] -= 1
+			match[1] -= 1
+		}
 		start, end := match[0], match[1]
 		piece := text[start:end]
 
