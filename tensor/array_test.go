@@ -1,10 +1,16 @@
-package Array
+package tensor
 
 import (
 	"fmt"
 	"math"
 	"testing"
 )
+
+func TestMain(m *testing.M) {
+	CudaSetup()
+	m.Run()
+	CudaTeardown()
+}
 
 func TestShapeLen(t *testing.T) {
 	s := Shape{2, 3, 4}
@@ -134,9 +140,6 @@ func TestMakeArray(t *testing.T) {
 }
 
 func TestArraySoftmax(t *testing.T) {
-	CudaSetup()
-	defer CudaTeardown()
-
 	tests := []struct {
 		shape    Shape
 		input    []float32
@@ -186,9 +189,6 @@ func equal(a *Array, expected []float32) bool {
 }
 
 func TestArrayMatmul(t *testing.T) {
-	CudaSetup()
-	defer CudaTeardown()
-
 	tests := []struct {
 		a, b, bias                       Shape
 		aData, bData, biasData, expected []float32
@@ -248,9 +248,6 @@ func TestArrayMatmul(t *testing.T) {
 }
 
 func TestArrayMatmulSoftmax(t *testing.T) {
-	CudaSetup()
-	defer CudaTeardown()
-
 	a, err := MakeArrayFrom(Shape{2, 3}, []float32{1, 2, 3, 4, 5, 6})
 	if err != nil {
 		t.Fatalf("MakeArrayFrom() error = %v", err)

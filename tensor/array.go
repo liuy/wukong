@@ -1,4 +1,4 @@
-package Array
+package tensor
 
 /*
 #cgo LDFLAGS: ./build/libwukong.a -L/usr/local/cuda/lib64 -lcudnn -lcublasLt -lcudart -lm -lcublas
