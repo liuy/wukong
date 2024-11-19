@@ -1,6 +1,7 @@
 package tensor
 
 import (
+	"fmt"
 	"testing"
 
 	"github.com/liuy/wukong/assert"
@@ -29,6 +30,16 @@ func TestTensorForwardNoOperator(t *testing.T) {
 	err = tensor.Forward()
 	assert.NoErr(t, err)
 	assert.Equal(t, data, tensor.Data())
+}
+
+func TestTensorOperatorFail(t *testing.T) {
+	fail := &Tensor{}
+	fail.operator = &Operator{"Fail", func(arrs ...*Array) (*Array, error) {
+		return nil, fmt.Errorf("failed")
+	}}
+	s := fail.Softmax()
+	err := s.Forward()
+	assert.Error(t, err)
 }
 
 func TestTensorMatmul(t *testing.T) {
