@@ -153,8 +153,12 @@ func TestArraySoftmax(t *testing.T) {
 	if err != nil {
 		t.Fatalf("MakeArrayFrom() error = %v", err)
 	}
-	if _, err := a.Softmax(); err == nil {
+	res, err := a.Softmax()
+	if err != nil {
 		t.Fatal("Array.Softmax() should have failed")
+	}
+	if !equal(res, []float32{0.0900305, 0.2447284, 0.6652409}) {
+		t.Errorf("Array.Softmax() = %v, want %v", res, []float32{0.0900305, 0.2447284, 0.6652409})
 	}
 
 	for _, tt := range tests {

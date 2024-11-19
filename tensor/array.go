@@ -189,9 +189,6 @@ func (r *cudaRunner) DeviceFree(a *Array) {
 }
 
 func (r *cudaRunner) Softmax(a *Array) (*Array, error) {
-	if a.Dims() < 2 {
-		return nil, fmt.Errorf("Array must have at least 2 dimensions")
-	}
 	col := a.Shape[len(a.Shape)-1]
 	row := a.Len() / col
 	out := C.cuda_malloc(C.size_t(row * col * a.ElemSize()))
