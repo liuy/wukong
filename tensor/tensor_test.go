@@ -84,3 +84,31 @@ func TestTensorSoftmax(t *testing.T) {
 	assert.NoErr(t, err)
 	assert.Equal(t, []float32{0.5, 0.5, 0.5, 0.5}, res.Data())
 }
+
+func TestTensorFormat(t *testing.T) {
+	a, err := MakeTensor(Shape{2, 2}, []float32{1, 2, 3, 4})
+	assert.NoErr(t, err)
+	assert.NotNil(t, a)
+	b, err := MakeTensor(Shape{3, 2}, []float32{5, 6, 7, 8, 9, 10})
+	assert.NoErr(t, err)
+	assert.NotNil(t, b)
+	bias, err := MakeTensor(Shape{3}, []float32{1, 1, 1})
+	assert.NoErr(t, err)
+	assert.NotNil(t, bias)
+
+	c := a.Matmul(b, bias)
+	assert.NotNil(t, c)
+	d, err := MakeTensor(Shape{2, 3}, []float32{1, 2, 3, 4, 5, 6})
+	assert.NoErr(t, err)
+	assert.NotNil(t, d)
+	e := c.Matmul(d, nil)
+	assert.NotNil(t, e)
+	f := e.Softmax()
+	assert.NotNil(t, f)
+	err = f.Forward()
+	assert.NoErr(t, err)
+	assert.Equal(t, []float32{0, 1, 0, 1}, f.Data())
+	graph := "Tensor (Softmax)\n    └── Tensor (Matmul)\n        ├── Tensor (Matmul)\n        │   ├── Tensor (2, 2)\n        │   ├── Tensor (3, 2)\n        │   └── Tensor (3)\n        ├── Tensor (2, 3)\n"
+	// fmt.Printf("%g", f) // uncomment to see the tensor graph
+	assert.Equal(t, graph, fmt.Sprintf("%g", f))
+}

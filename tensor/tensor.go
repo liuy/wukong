@@ -1,6 +1,10 @@
 package tensor
 
-import "log/slog"
+import (
+	"fmt"
+	"log/slog"
+	"strings"
+)
 
 type Operator struct {
 	name string
@@ -85,4 +89,55 @@ func MakeTensor(s Shape, data any) (*Tensor, error) {
 		return nil, err
 	}
 	return &Tensor{Array: a}, nil
+}
+
+func (t *Tensor) Format(f fmt.State, c rune) {
+	switch c {
+	case 'g':
+		fmt.Fprint(f, drawTensor(t))
+	default:
+		fmt.Fprintf(f, "%v", t.Array)
+	}
+}
+
+func drawTensor(t *Tensor) string {
+	var sb strings.Builder
+	drawRecursive(t, &sb, "", true, true)
+	return sb.String()
+}
+
+func drawRecursive(t *Tensor, sb *strings.Builder, prefix string, isLast bool, isRoot bool) {
+	marker := "├── "
+	if isLast {
+		marker = "└── "
+	}
+	if !isRoot {
+		sb.WriteString(prefix + marker)
+	}
+
+	if isRoot || t.operator != nil {
+		// For root or intermediate nodes, show operator name
+		opName := "None"
+		if t.operator != nil {
+			opName = t.operator.name
+		}
+		sb.WriteString(fmt.Sprintf("Tensor (%s)\n", opName))
+	} else {
+		// For leaf nodes, show Shape
+		sb.WriteString(fmt.Sprintf("Tensor %v\n", t.Shape()))
+	}
+
+	childPrefix := prefix
+	if isLast {
+		childPrefix += "    "
+	} else {
+		childPrefix += "│   "
+	}
+
+	for i, operand := range t.operands {
+		isLastChild := (i == len(t.operands)-1)
+		if operand != nil {
+			drawRecursive(operand, sb, childPrefix, isLastChild, false)
+		}
+	}
 }
