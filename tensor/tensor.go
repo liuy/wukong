@@ -2,7 +2,6 @@ package tensor
 
 import (
 	"fmt"
-	"log/slog"
 	"strings"
 )
 
@@ -70,7 +69,6 @@ func (t *Tensor) Forward() error {
 // Data returns the data of the Tensor on the host.
 func (t *Tensor) Data() any {
 	if t.Array == nil {
-		slog.Warn("Tensor has no data. You may have forgotten to call Forward()")
 		return nil
 	}
 	return t.Array.ToHost().Interface()

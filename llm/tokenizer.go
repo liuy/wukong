@@ -3,7 +3,6 @@ package llm
 import (
 	"bufio"
 	"encoding/base64"
-	"log/slog"
 	"math"
 	"os"
 	"regexp"
@@ -148,7 +147,6 @@ func (t *Tokenizer) BytePairMerge(piece string) []int {
 		id, ok := t.TokenToId[token]
 		if !ok {
 			id = t.UnknownId
-			slog.Warn("Tokenizer found unknown token: " + token)
 		}
 		splitIds = append(splitIds, id)
 	}
