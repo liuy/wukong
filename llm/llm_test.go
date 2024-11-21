@@ -56,7 +56,7 @@ func BenchmarkTokenizer(b *testing.B) {
 	toks, err := getTokensFrom("test_data/llama3_tokenizer.model")
 	assert.NoErr(b, err)
 	tok := NewTokenizer(toks, &Llama3Handler{})
-	file, err := os.Open("shakespeare.txt")
+	file, err := os.Open("test_data/shakespeare.txt")
 	assert.NoErr(b, err)
 	defer file.Close()
 
