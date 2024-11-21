@@ -470,3 +470,51 @@ TEST(Cuda, cuda_get_freqs_cis)
         cuda_free(d_out);
     }
 }
+
+TEST(Cuda, cuda_get_embeddings) {
+    int batch = 2;
+    int row = 4;
+    int col = 4;
+    int vocab_size = 6;
+
+    int inp[] = {0, 2, 1, 3, 4, 5, 1, 0};
+    float embd[] = {
+        0.1f, 0.2f, 0.3f, 0.4f,
+        0.4f, 0.5f, 0.6f, 0.7f,
+        0.7f, 0.8f, 0.9f, 1.0f,
+        1.0f, 1.1f, 1.2f, 1.3f,
+        1.1f, 1.2f, 1.3f, 1.4f,
+        1.4f, 1.5f, 1.6f, 1.7f,
+    };
+    float h_out[batch * row * col];
+
+    int *d_inp;
+    float *d_embd, *d_out;
+
+    cudaMalloc(&d_inp, sizeof(int) * batch * row);
+    cudaMalloc(&d_embd, sizeof(float) * vocab_size * col);
+    cudaMalloc(&d_out, sizeof(float) * batch * row * col);
+
+    cudaMemcpy(d_inp, inp, sizeof(int) * batch * row, cudaMemcpyHostToDevice);
+    cudaMemcpy(d_embd, embd, sizeof(float) * vocab_size * col, cudaMemcpyHostToDevice);
+
+    cuda_get_embeddings(d_out, d_inp, d_embd, batch, row, col);
+
+    cudaMemcpy(h_out, d_out, sizeof(float) * batch * row * col, cudaMemcpyDeviceToHost);
+
+    float expected[] = {
+        0.1f, 0.2f, 0.3f, 0.4f,
+        0.7f, 0.8f, 0.9f, 1.0f,
+        0.4f, 0.5f, 0.6f, 0.7f,
+        1.0f, 1.1f, 1.2f, 1.3f,
+        1.1f, 1.2f, 1.3f, 1.4f,
+        1.4f, 1.5f, 1.6f, 1.7f,
+        0.4f, 0.5f, 0.6f, 0.7f,
+        0.1f, 0.2f, 0.3f, 0.4f,
+    };
+    assert_array_eq(h_out, expected, batch * row * col);
+
+    cudaFree(d_inp);
+    cudaFree(d_embd);
+    cudaFree(d_out);
+}

@@ -427,6 +427,24 @@ __global__ void cuda_get_freqs_cis_kernel(floatX *freqs_cis, int HS, int row, fl
     freqs_cis[t * HS + 2 * i + 1] = sinf(angle); // imaginary part
 }
 
+__global__ void get_embeddings_kernel(floatX* out, const int* inp, const floatX* wte, int B, int T, int C)
+{
+    int idx = (blockIdx.x * blockDim.x + threadIdx.x) * x128::size;
+    int N = B * T * C;
+    if (idx >= N) {
+        return;
+    }
+    int bt = idx / C;
+    int b = bt / T;
+    int t = bt % T;
+    int c = idx % C;
+    int ix = inp[b * T + t];
+    floatX* out_btc = out + b * T * C + t * C + c;
+    const floatX* wte_ix = wte + ix * C + c;
+    x128 wte128 = load128cs(wte_ix);
+    store128(out_btc, wte128);
+}
+
 extern "C" {
 void cuda_init(void)
 {
@@ -756,6 +774,26 @@ void cuda_get_freqs_cis(void *freqs_cis, int HS, int row, float theta, int use_s
     int block_size = 256;
     int num_blocks = CEIL_DIV(total_threads, block_size);
     cuda_get_freqs_cis_kernel<<<num_blocks, block_size>>>((floatX *)freqs_cis, HS, row, theta, use_scaled);
+    cuda_check(cudaGetLastError());
+}
+
+/*
+ * Get the embeddings for the given indices using the embedding table
+ *
+ * @param out: output matrix(batch, row, col)
+ * @param inp: input matrix(batch, row)
+ * @param embd: embedding table (vacob_size, col)
+ * @param batch: batch size
+ * @param row: row size (number of indices)
+ * @param col: column size (embedding size)
+ */
+void cuda_get_embeddings(void* out, const void *inp, const void *embd, int batch, int row, int col)
+{
+    assert(col % x128::size == 0); // make sure col is multiple of 128-bit
+    const int block_size = 256;
+    const int N = batch * row * col;
+    const int grid_size = CEIL_DIV(N, (block_size * x128::size));
+    get_embeddings_kernel<<<grid_size, block_size>>>((floatX *)out, (const int *)inp, (const floatX *)embd, batch, row, col);
     cuda_check(cudaGetLastError());
 }
 
