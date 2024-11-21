@@ -3,15 +3,7 @@ package tensor
 /*
 #cgo LDFLAGS: ./build/libwukong.a -L/usr/local/cuda/lib64 -lcudnn -lcublasLt -lcudart -lm -lcublas
 
-void cuda_init(void);
-void cuda_fini(void);
-void cuda_to_host(void* dst, void* src, size_t size);
-void cuda_to_device(void* dst, void* src, size_t size);
-void* cuda_malloc(size_t size);
-void cuda_free(void* ptr);
-void cuda_matmul(void *out, const void *inp, const void *weight, const void *bias,
-            int row, int column, int oc);
-void cuda_softmax(void* output, void* intput, int row, int col);
+#include "../cuda.h"
 */
 import "C"
 

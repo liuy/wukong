@@ -445,65 +445,6 @@ __global__ void get_embeddings_kernel(floatX* out, const int* inp, const floatX*
     store128(out_btc, wte128);
 }
 
-extern "C" {
-void cuda_init(void)
-{
-    srand(0);   // determinism
-
-    // set up the device
-    int deviceIdx = 0;
-    cuda_check(cudaSetDevice(deviceIdx));
-    cudaDeviceProp deviceProp;
-    cudaGetDeviceProperties(&deviceProp, deviceIdx);
-    cuda_num_SMs = deviceProp.multiProcessorCount;
-    cuda_threads_per_SM = deviceProp.maxThreadsPerMultiProcessor;
-    cuda_arch_major = deviceProp.major;
-    cuda_arch_minor = deviceProp.minor;
-    cuda_threads_per_block = deviceProp.maxThreadsPerBlock;
-    cuda_warp_size = deviceProp.warpSize;
-    // printf("CUDA device: %s, major %d, minor %d, num_SMs: %d, threads_per_SM: %d, threads_per_block: %d, warp_size: %d\n",
-    //        deviceProp.name, cuda_arch_major, cuda_arch_minor, cuda_num_SMs, cuda_threads_per_SM, cuda_threads_per_block, cuda_warp_size);
-
-    cudnn_check(cudnnCreate(&cudnn_handle));
-    cublas_check(cublasCreate(&cublas_handle));
-    cublas_check(cublasLtCreate(&cublaslt_handle));
-    cuda_check(cudaMalloc(&cublaslt_workspace, cublaslt_workspace_size));
-
-    // TF32 precision is equivalent to torch.set_float32_matmul_precision('high')
-    int enable_tf32 = cuda_arch_major >= 8 ? 1 : 0;
-    cublas_compute_type = enable_tf32 ? CUBLAS_COMPUTE_32F_FAST_TF32 : CUBLAS_COMPUTE_32F;
-}
-
-void cuda_fini(void)
-{
-    cuda_check(cudaFree(cublaslt_workspace));
-    cublas_check(cublasLtDestroy(cublaslt_handle));
-    cudnn_check(cudnnDestroy(cudnn_handle));
-}
-
-
-void* cuda_malloc(size_t size)
-{
-    void *ptr;
-    cuda_check(cudaMalloc(&ptr, size));
-    return ptr;
-}
-
-void cuda_free(void* ptr)
-{
-    cuda_check(cudaFree(ptr));
-}
-
-void cuda_to_device(void* dst, void* src, size_t size)
-{
-    cuda_check(cudaMemcpy(dst, src, size, cudaMemcpyHostToDevice));
-}
-
-void cuda_to_host(void* dst, void* src, size_t size)
-{
-    cuda_check(cudaMemcpy(dst, src, size, cudaMemcpyDeviceToHost));
-}
-
 void cuda_matmul_cublas(float *out, const float *inp, const float *weight, const float *bias,
                         int row, int column, int oc)
 {
@@ -575,6 +516,65 @@ void cuda_matmul_cublaslt(void *out, const void *inp, const void *weight, const 
     cublas_check(cublasLtMatrixLayoutDestroy(bias_layout));
 }
 
+extern "C" {
+void cuda_init(void)
+{
+    srand(0);   // determinism
+
+    // set up the device
+    int deviceIdx = 0;
+    cuda_check(cudaSetDevice(deviceIdx));
+    cudaDeviceProp deviceProp;
+    cudaGetDeviceProperties(&deviceProp, deviceIdx);
+    cuda_num_SMs = deviceProp.multiProcessorCount;
+    cuda_threads_per_SM = deviceProp.maxThreadsPerMultiProcessor;
+    cuda_arch_major = deviceProp.major;
+    cuda_arch_minor = deviceProp.minor;
+    cuda_threads_per_block = deviceProp.maxThreadsPerBlock;
+    cuda_warp_size = deviceProp.warpSize;
+    // printf("CUDA device: %s, major %d, minor %d, num_SMs: %d, threads_per_SM: %d, threads_per_block: %d, warp_size: %d\n",
+    //        deviceProp.name, cuda_arch_major, cuda_arch_minor, cuda_num_SMs, cuda_threads_per_SM, cuda_threads_per_block, cuda_warp_size);
+
+    cudnn_check(cudnnCreate(&cudnn_handle));
+    cublas_check(cublasCreate(&cublas_handle));
+    cublas_check(cublasLtCreate(&cublaslt_handle));
+    cuda_check(cudaMalloc(&cublaslt_workspace, cublaslt_workspace_size));
+
+    // TF32 precision is equivalent to torch.set_float32_matmul_precision('high')
+    int enable_tf32 = cuda_arch_major >= 8 ? 1 : 0;
+    cublas_compute_type = enable_tf32 ? CUBLAS_COMPUTE_32F_FAST_TF32 : CUBLAS_COMPUTE_32F;
+}
+
+void cuda_fini(void)
+{
+    cuda_check(cudaFree(cublaslt_workspace));
+    cublas_check(cublasLtDestroy(cublaslt_handle));
+    cudnn_check(cudnnDestroy(cudnn_handle));
+}
+
+
+void* cuda_malloc(size_t size)
+{
+    void *ptr;
+    cuda_check(cudaMalloc(&ptr, size));
+    return ptr;
+}
+
+void cuda_free(void* ptr)
+{
+    cuda_check(cudaFree(ptr));
+}
+
+void cuda_to_device(void* dst, void* src, size_t size)
+{
+    cuda_check(cudaMemcpy(dst, src, size, cudaMemcpyHostToDevice));
+}
+
+void cuda_to_host(void* dst, void* src, size_t size)
+{
+    cuda_check(cudaMemcpy(dst, src, size, cudaMemcpyDeviceToHost));
+}
+
 /*
  * Fused matrix multiplication with optional bias addition: out = inp @ weight^T + bias
  *
@@ -605,38 +605,6 @@ void cuda_softmax(void* output, void* input, int row, int col)
     const int shared_mem_size = (2 * (block_size / WARP_SIZE)) * sizeof(float); // Space for max and sum values
     softmax_kernel<<<row, block_size, shared_mem_size>>>((float *)output, (const float *)input, row, col);
     cuda_check(cudaGetLastError());
-}
-
-/*
- * Vanilla multi-head attention implementation
- *
- * attention = softmax(Q@K^T/sqrt(HS)) @ V
- *
- * @param out: output matrix(batch, row, col)
- * @param inp: input matrix(batch, row, 3 * col) (Q, K, V) concatenated along the last dimension
- * @param batch: batch size
- * @param row: row size
- * @param NH: number of heads
- * @param HS: head size
- * @attention col = NH * HS
- */
-void cuda_mha_attention(void *out, const void *inp, int batch, int row, int NH, int HS)
-{
-    return cuda_gqa_attention(out, inp, batch, row, NH, NH, HS); // qNH = kvNH
-}
-
-/*
- * MQA attention
- * @param out: output matrix(batch, row, col) where col = qNH * HS
- * @param inp: input matrix(batch, row, (qNH + 2 * kvNH) * HS) (Q, K, V) concatenated along the last dimension
- * @param batch: batch size
- * @param row: row size
- * @param qNH: number of Q heads
- * @param HS: head size
- */
-void cuda_mqa_attention(void *out, const void *inp, int batch, int row, int qNH, int HS)
-{
-    return cuda_gqa_attention(out, inp, batch, row, qNH, 1, HS); // kvNH = 1
 }
 
 /*
@@ -743,6 +711,38 @@ void cuda_swiglu(void *out, const void *inp, int batch, int row, int col)
     int grid_size = CEIL_DIV(batch * row * col, block_size);
     swiglu_kernel<<<grid_size, block_size>>>((floatX *)out, (const floatX *)inp, batch, row, col);
     cuda_check(cudaGetLastError());
+}
+
+/*
+ * Vanilla multi-head attention implementation
+ *
+ * attention = softmax(Q@K^T/sqrt(HS)) @ V
+ *
+ * @param out: output matrix(batch, row, col)
+ * @param inp: input matrix(batch, row, 3 * col) (Q, K, V) concatenated along the last dimension
+ * @param batch: batch size
+ * @param row: row size
+ * @param NH: number of heads
+ * @param HS: head size
+ * @attention col = NH * HS
+ */
+void cuda_mha_attention(void *out, const void *inp, int batch, int row, int NH, int HS)
+{
+    return cuda_gqa_attention(out, inp, batch, row, NH, NH, HS); // qNH = kvNH
+}
+
+/*
+ * MQA attention
+ * @param out: output matrix(batch, row, col) where col = qNH * HS
+ * @param inp: input matrix(batch, row, (qNH + 2 * kvNH) * HS) (Q, K, V) concatenated along the last dimension
+ * @param batch: batch size
+ * @param row: row size
+ * @param qNH: number of Q heads
+ * @param HS: head size
+ */
+void cuda_mqa_attention(void *out, const void *inp, int batch, int row, int qNH, int HS)
+{
+    return cuda_gqa_attention(out, inp, batch, row, qNH, 1, HS); // kvNH = 1
 }
 
 /*
