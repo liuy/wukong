@@ -121,9 +121,18 @@ type GGUFHeader struct {
 	KVCount uint64
 }
 
-// AlignOffset aligns an offset to the specified alignment
-func AlignOffset(offset int64, alignment int64) int64 {
+// alignOffset aligns an offset to the specified alignment
+func alignOffset(offset int64, alignment int64) int64 {
 	return offset + (alignment-(offset%alignment))%alignment
+}
+
+func reverseSlice(slice []uint64) {
+	if len(slice) == 0 || len(slice) == 1 {
+		return
+	}
+	for i, j := 0, len(slice)-1; i < j; i, j = i+1, j-1 {
+		slice[i], slice[j] = slice[j], slice[i]
+	}
 }
 
 const GGML_MAX_DIMS = 4
@@ -228,7 +237,7 @@ func GGUFParser(filename string) (*GGUFFile, error) {
 			return nil, fmt.Errorf("failed to get tensor data offset: %w", err)
 		}
 
-		gguf.Offset = AlignOffset(gguf.Offset, gguf.Alignment)
+		gguf.Offset = alignOffset(gguf.Offset, gguf.Alignment)
 		if _, err := file.Seek(gguf.Offset, io.SeekStart); err != nil {
 			return nil, fmt.Errorf("failed to seek to aligned tensor data offset: %w", err)
 		}
@@ -473,6 +482,8 @@ func readTensorInfo(file *os.File) (GGUFTensorInfo, error) {
 	if err := binary.Read(file, binary.LittleEndian, &info.Offset); err != nil {
 		return info, fmt.Errorf("failed to read tensor offset: %w", err)
 	}
+	// GGUF-convert reverses it for GGML, we reverse it back
+	reverseSlice(info.Dims[:info.NumDims])
 
 	return info, nil
 }
