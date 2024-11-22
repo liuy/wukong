@@ -28,6 +28,7 @@ type Runner interface {
 	ToDevice(a *Array, src unsafe.Pointer)
 	ToHost(a *Array) reflect.Value
 	DeviceFree(a *Array)
+	Embedding(embd, ids *Array) (*Array, error)
 }
 
 // Array is a multi-dimensional array of any type in a row-major order. It is represented by a Shape in the
@@ -156,6 +157,9 @@ func (a *Array) ToHost() reflect.Value { return a.Runner.ToHost(a) }
 // Free device memory
 func (a *Array) DeviceFree() { a.Runner.DeviceFree(a) }
 
+// Embedding returns the embeddings of the given idsss
+func (a *Array) Embedding(ids *Array) (*Array, error) { return a.Runner.Embedding(a, ids) }
+
 // Run array operations on the CUDA device
 type cudaRunner struct{}
 
@@ -213,6 +217,29 @@ func (r *cudaRunner) Matmul(a, b, bias *Array) (*Array, error) {
 	shape := a.Shape
 	shape[len(shape)-1] = oc
 	ret := NewArray(shape, a.dtype)
+	ret.dptr = out
+	return ret, nil
+}
+
+func (r cudaRunner) Embedding(embd, ids *Array) (*Array, error) {
+	if ids.ElemType() != reflect.TypeOf(int32(0)) {
+		return nil, fmt.Errorf("index must be an int32 integer")
+	}
+	if ids.Dims() > 2 {
+		return nil, fmt.Errorf("index must be 1D or 2D")
+	}
+	if embd.Dims() != 2 {
+		return nil, fmt.Errorf("embedding must be 2D")
+	}
+	col := embd.Shape[1]
+	row := ids.Shape[ids.Dims()-1]
+	batch := 1
+	if ids.Dims() == 2 {
+		batch = ids.Shape[0]
+	}
+	out := C.cuda_malloc(C.size_t(batch * row * col * embd.ElemSize()))
+	C.cuda_get_embeddings(out, ids.dptr, embd.dptr, C.int(batch), C.int(row), C.int(col))
+	ret := NewArray(Shape{batch, row, col}, embd.dtype)
 	ret.dptr = out
 	return ret, nil
 }

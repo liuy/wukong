@@ -205,3 +205,77 @@ func TestArrayMatmulSoftmax(t *testing.T) {
 	expected := []float32{6.1289825e-06, 0.0024726081, 0.9975212, 9.3576195e-14, 3.059022e-07, 0.99999964}
 	assert.SliceNear(t, expected, d.ToHost().Interface().([]float32), 1e-6)
 }
+func TestArrayEmbedding(t *testing.T) {
+	tests := []struct {
+		embdShape, idsShape Shape
+		embdData, idsData   any
+		expected            []float32
+		expectError         bool
+	}{
+		{
+			embdShape: Shape{3, 4}, idsShape: Shape{2},
+			embdData: []float32{
+				0.1, 0.2, 0.3, 0.4,
+				0.5, 0.6, 0.7, 0.8,
+				0.9, 1.0, 1.1, 1.2,
+			},
+			idsData:     []int32{1, 2},
+			expected:    []float32{0.5, 0.6, 0.7, 0.8, 0.9, 1.0, 1.1, 1.2},
+			expectError: false,
+		},
+		{
+			embdShape: Shape{4, 4}, idsShape: Shape{2, 2},
+			embdData: []float32{
+				0.1, 0.2, 0.3, 0.4,
+				0.5, 0.6, 0.7, 0.8,
+				0.9, 1.0, 1.1, 1.2,
+				1.3, 1.4, 1.5, 1.6,
+			},
+			idsData:     []int32{1, 3, 0, 2},
+			expected:    []float32{0.5, 0.6, 0.7, 0.8, 1.3, 1.4, 1.5, 1.6, 0.1, 0.2, 0.3, 0.4, 0.9, 1.0, 1.1, 1.2},
+			expectError: false,
+		},
+		{
+			embdShape: Shape{4}, idsShape: Shape{3},
+			embdData:    []float32{0.1, 0.2, 0.3, 0.4},
+			idsData:     []int32{1, 3, 4},
+			expected:    nil,
+			expectError: true,
+		},
+		{
+			embdShape: Shape{2, 4}, idsShape: Shape{2, 3},
+			embdData:    []float32{0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8},
+			idsData:     []int{1, 3, 0, 2, 1, 3},
+			expected:    nil,
+			expectError: true,
+		},
+		{
+			embdShape: Shape{2, 2, 2}, idsShape: Shape{2, 3},
+			embdData:    []float32{0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8},
+			idsData:     []int32{1, 3, 0, 2, 1, 3},
+			expected:    nil,
+			expectError: true,
+		},
+		{
+			embdShape: Shape{2, 4}, idsShape: Shape{2, 2, 2},
+			embdData:    []float32{0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8},
+			idsData:     []int32{1, 3, 0, 2, 1, 3, 0, 2},
+			expected:    nil,
+			expectError: true,
+		},
+	}
+
+	for _, tt := range tests {
+		embd, err := MakeArrayFrom(tt.embdShape, tt.embdData)
+		assert.NoErr(t, err)
+		ids, err := MakeArrayFrom(tt.idsShape, tt.idsData)
+		assert.NoErr(t, err)
+
+		result, err := embd.Embedding(ids)
+		assert.Equal(t, err != nil, tt.expectError)
+		if err != nil {
+			continue
+		}
+		assert.SliceNear(t, tt.expected, result.ToHost().Interface().([]float32), 1e-6)
+	}
+}

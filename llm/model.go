@@ -1,6 +1,8 @@
 package llm
 
-import "github.com/liuy/wukong/tensor"
+import (
+	"github.com/liuy/wukong/tensor"
+)
 
 type Tensor = tensor.Tensor
 
