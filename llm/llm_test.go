@@ -103,6 +103,29 @@ func TestGGUFParser(t *testing.T) {
 	assert.Equal(t, expected, ids2)
 }
 
+func TestGGUFGetConfig(t *testing.T) {
+	m, err := NewModel("test_data/llama3.2-3b.gguf")
+	if err != nil {
+		t.Skip("llama3.2-3b.gguf not found")
+	}
+	assert.Equal(t, &Config{"llama", 131072, 28, 128, 24, 8, 3072, 1e-05, 500000}, m.Config)
+	text := "你好，World!"
+	ids := m.Encode(text)
+	assert.Equal(t, m.Decode(ids), text)
+
+	g := GGUFFile{GGUFHeader{}, map[string]any{
+		"general.architecture":               "llama",
+		"llama.context_length":               uint32(131072),
+		"llama.block_count":                  uint32(28),
+		"llama.attention.head_count":         uint32(24),
+		"llama.embedding_length":             uint32(3072),
+		"llama.rope.freq_base":               float32(500000),
+		"llama.attention.layer_norm_epsilon": float32(1e-05),
+		"llama.attention.head_count_kv":      uint32(8),
+	}, nil, 0, 0, 0, nil}
+	assert.Equal(t, g.GetConfig(), m.Config)
+}
+
 func BenchmarkGGUFParser(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		gguf, err := GGUFParser("test_data/ggml-vocab-llama-bpe.gguf")

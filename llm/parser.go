@@ -575,3 +575,37 @@ func (g *GGUFFile) GetTokensMap() map[string]int {
 	}
 	return tm
 }
+
+func (g *GGUFFile) GetTokenizer() *Tokenizer {
+	tokens := g.GetTokensMap()
+	tok := NewTokenizer(tokens, &Llama3Handler{})
+	return tok
+}
+
+func (g *GGUFFile) GetTensor() *Tensor {
+	return nil
+}
+
+func (g *GGUFFile) GetConfig() *Config {
+	arch := g.KVs["general.architecture"].(string)
+	conf := &Config{
+		Arch:       arch,
+		ContextLen: g.KVs[arch+".context_length"].(uint32),
+		NumHidden:  g.KVs[arch+".block_count"].(uint32),
+		NumHead:    g.KVs[arch+".attention.head_count"].(uint32),
+		EmbedDim:   g.KVs[arch+".embedding_length"].(uint32),
+		RopeTheta:  g.KVs[arch+".rope.freq_base"].(float32),
+	}
+	eps := g.KVs[arch+".attention.layer_norm_rms_epsilon"]
+	if eps == nil {
+		eps = g.KVs[arch+".attention.layer_norm_epsilon"]
+	}
+	conf.NormEpsilon = eps.(float32)
+
+	conf.HeadDim = conf.EmbedDim / conf.NumHead
+	conf.NumKVHead = conf.NumHead
+	if kvh := g.KVs[arch+".attention.head_count_kv"]; kvh != nil {
+		conf.NumKVHead = kvh.(uint32)
+	}
+	return conf
+}
