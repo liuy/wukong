@@ -246,7 +246,7 @@ func (r cudaRunner) Embedding(embd, ids *Array) (*Array, error) {
 		batch = ids.DimAt(0)
 	}
 	out := C.cuda_malloc(C.size_t(batch * row * col * embd.ElemSize()))
-	C.cuda_get_embeddings(out, ids.dptr, embd.dptr, C.int(batch), C.int(row), C.int(col))
+	C.cuda_embedding(out, ids.dptr, embd.dptr, C.int(batch), C.int(row), C.int(col))
 	ret := NewArray(Shape{batch, row, col}, embd.dtype)
 	ret.dptr = out
 	return ret, nil

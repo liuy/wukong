@@ -471,7 +471,7 @@ TEST(Cuda, cuda_get_freqs_cis)
     }
 }
 
-TEST(Cuda, cuda_get_embeddings) {
+TEST(Cuda, cuda_embedding) {
     int batch = 2;
     int row = 4;
     int col = 4;
@@ -498,7 +498,7 @@ TEST(Cuda, cuda_get_embeddings) {
     cudaMemcpy(d_inp, inp, sizeof(int) * batch * row, cudaMemcpyHostToDevice);
     cudaMemcpy(d_embd, embd, sizeof(float) * vocab_size * col, cudaMemcpyHostToDevice);
 
-    cuda_get_embeddings(d_out, d_inp, d_embd, batch, row, col);
+    cuda_embedding(d_out, d_inp, d_embd, batch, row, col);
 
     cudaMemcpy(h_out, d_out, sizeof(float) * batch * row * col, cudaMemcpyDeviceToHost);
 

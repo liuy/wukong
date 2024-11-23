@@ -787,7 +787,7 @@ void cuda_get_freqs_cis(void *freqs_cis, int HS, int row, float theta, int use_s
  * @param row: row size (number of indices)
  * @param col: column size (embedding size)
  */
-void cuda_get_embeddings(void* out, const void *inp, const void *embd, int batch, int row, int col)
+void cuda_embedding(void* out, const void *inp, const void *embd, int batch, int row, int col)
 {
     assert(col % x128::size == 0); // make sure col is multiple of 128-bit
     const int block_size = 256;

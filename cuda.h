@@ -13,4 +13,4 @@ void cuda_rmsnorm(void* out, const void* inp, const void* weight, int batch, int
 void cuda_swiglu(void *out, const void *inp, int batch, int row, int col);
 void cuda_rope(void *out, const void *inp, const void *freqs_cis, int batch, int row, int NH, int HS);
 void cuda_get_freqs_cis(void *freqs_cis, int HS, int row, float theta, int use_scaled);
-void cuda_get_embeddings(void* out, const void *inp, const void *embd, int batch, int row, int col);
+void cuda_embedding(void* out, const void *inp, const void *embd, int batch, int row, int col);

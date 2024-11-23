@@ -141,7 +141,7 @@ const GGML_MAX_DIMS = 4
 type GGUFTensorInfo struct {
 	// The name of the tensor. It is a standard GGUF string, with the caveat that
 	// it must be at most 64 bytes long.
-	Name string // GGUF string is transformed to go string after parsing from file
+	// Name string // GGUF string is transformed to go string after parsing from file
 	// The number of dimensions in the tensor.
 	// Currently at most 4, but this may change in the future.
 	NumDims uint32
@@ -171,7 +171,7 @@ type GGUFFile struct {
 	KVs map[string]any
 
 	// Tensor infos, which can be used to locate the tensor data.
-	TensorInfos []GGUFTensorInfo
+	TensorInfos map[string]GGUFTensorInfo
 
 	// Tensor data.
 	//
@@ -223,13 +223,13 @@ func GGUFParser(filename string) (*GGUFFile, error) {
 	}
 
 	if gguf.Header.TensorCount != 0 {
-		gguf.TensorInfos = make([]GGUFTensorInfo, gguf.Header.TensorCount)
+		gguf.TensorInfos = make(map[string]GGUFTensorInfo, gguf.Header.TensorCount)
 		for i := uint64(0); i < gguf.Header.TensorCount; i++ {
-			info, err := readTensorInfo(file)
+			name, info, err := readTensorInfo(file)
 			if err != nil {
 				return nil, fmt.Errorf("failed to read tensor info %d: %w", i, err)
 			}
-			gguf.TensorInfos[i] = info
+			gguf.TensorInfos[name] = info
 		}
 
 		gguf.Offset, err = file.Seek(0, io.SeekCurrent)
@@ -452,40 +452,39 @@ func readKV(file *os.File) (GGUFKV, error) {
 	return kv, nil
 }
 
-func readTensorInfo(file *os.File) (GGUFTensorInfo, error) {
+func readTensorInfo(file *os.File) (string, GGUFTensorInfo, error) {
 	var info GGUFTensorInfo
 
 	name, err := readGGUFString(file)
 	if err != nil {
-		return info, fmt.Errorf("failed to read tensor name: %w", err)
+		return "", info, fmt.Errorf("failed to read tensor name: %w", err)
 	}
-	info.Name = name
 
 	if err := binary.Read(file, binary.LittleEndian, &info.NumDims); err != nil {
-		return info, fmt.Errorf("failed to read number of dimensions: %w", err)
+		return name, info, fmt.Errorf("failed to read number of dimensions: %w", err)
 	}
 
 	if info.NumDims > GGML_MAX_DIMS {
-		return info, fmt.Errorf("number of dimensions exceeds maximum: %d > %d", info.NumDims, GGML_MAX_DIMS)
+		return name, info, fmt.Errorf("number of dimensions exceeds maximum: %d > %d", info.NumDims, GGML_MAX_DIMS)
 	}
 
 	for i := uint32(0); i < info.NumDims; i++ {
 		if err := binary.Read(file, binary.LittleEndian, &info.Dims[i]); err != nil {
-			return info, fmt.Errorf("failed to read dimension %d: %w", i, err)
+			return name, info, fmt.Errorf("failed to read dimension %d: %w", i, err)
 		}
 	}
 
 	if err := binary.Read(file, binary.LittleEndian, &info.Type); err != nil {
-		return info, fmt.Errorf("failed to read tensor type: %w", err)
+		return name, info, fmt.Errorf("failed to read tensor type: %w", err)
 	}
 
 	if err := binary.Read(file, binary.LittleEndian, &info.Offset); err != nil {
-		return info, fmt.Errorf("failed to read tensor offset: %w", err)
+		return name, info, fmt.Errorf("failed to read tensor offset: %w", err)
 	}
 	// GGUF-convert reverses it for GGML, we reverse it back
 	reverseSlice(info.Dims[:info.NumDims])
 
-	return info, nil
+	return name, info, nil
 }
 
 func (g *GGUFFile) Format(st fmt.State, r rune) {
@@ -498,8 +497,8 @@ func (g *GGUFFile) Format(st fmt.State, r rune) {
 			s += fmt.Sprintf("%s: %v\n", k, v)
 		}
 	}
-	for _, info := range g.TensorInfos {
-		s += fmt.Sprintf("%s, Dims[", info.Name)
+	for name, info := range g.TensorInfos {
+		s += fmt.Sprintf("%s, Dims[", name)
 		for i := uint32(0); i < info.NumDims-1; i++ {
 			s += fmt.Sprintf("%d ", info.Dims[i])
 		}
@@ -582,7 +581,11 @@ func (g *GGUFFile) GetTokenizer() *Tokenizer {
 	return tok
 }
 
-func (g *GGUFFile) GetTensor() *Tensor {
+func (g *GGUFFile) BuildTensor() *Tensor {
+	_, ok := g.TensorInfos["token_embd.weight"]
+	if !ok {
+		return nil
+	}
 	return nil
 }
 

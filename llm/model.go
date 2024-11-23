@@ -29,5 +29,5 @@ func NewModel(path string) (*Model, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Model{gguf.GetConfig(), gguf.GetTokenizer(), gguf.GetTensor()}, nil
+	return &Model{gguf.GetConfig(), gguf.GetTokenizer(), gguf.BuildTensor()}, nil
 }
