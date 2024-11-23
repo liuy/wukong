@@ -2,7 +2,10 @@ package tensor
 
 import (
 	"fmt"
+	"reflect"
+	"runtime"
 	"testing"
+	"unsafe"
 
 	"github.com/liuy/wukong/assert"
 )
@@ -17,6 +20,8 @@ func TestShapeLen(t *testing.T) {
 	s := Shape{2, 3, 4}
 	expected := 24
 	assert.Equal(t, s.Len(), expected)
+	s = Shape{}
+	assert.Equal(t, s.Len(), 1) // No dimensions means a scalar
 }
 
 func TestArrayElemSize(t *testing.T) {
@@ -119,6 +124,26 @@ func TestMakeArray(t *testing.T) {
 	}
 }
 
+func TestArrayDeviceFree(t *testing.T) {
+	var text string
+	shape := Shape{2, 3}
+	v := reflect.ValueOf([]float32{1, 2, 3, 4, 5, 6})
+	a := &Array{shape, Storage{dtype: v.Type()}, &cudaRunner{}}
+	a.ToDevice(unsafe.Pointer(v.Pointer()))
+	assert.NotNil(t, a.dptr)
+	assert.Equal(t, []float32{1, 2, 3, 4, 5, 6}, a.ToHost().Interface().([]float32))
+
+	runtime.SetFinalizer(a, func(a *Array) {
+		a.DeviceFree()
+		assert.Nil(t, a.dptr)
+		text = "DeviceFree called"
+	})
+	a = nil
+	runtime.GC()
+	runtime.GC() // call gc twice to ensure finalizer is called.
+	assert.Equal(t, "DeviceFree called", text)
+}
+
 func TestArraySoftmax(t *testing.T) {
 	tests := []struct {
 		shape    Shape
@@ -169,6 +194,16 @@ func TestArrayMatmul(t *testing.T) {
 		{
 			a: Shape{2, 3}, b: Shape{2, 2}, bias: Shape{},
 			aData: []float32{1, 2, 3, 4, 5, 6}, bData: []float32{7, 8, 9, 10}, biasData: nil,
+			expected: nil, expectError: true,
+		},
+		{
+			a: Shape{2, 3}, b: Shape{2, 2, 2}, bias: Shape{},
+			aData: []float32{1, 2, 3, 4, 5, 6}, bData: []float32{7, 8, 9, 10, 11, 12, 13, 14}, biasData: nil,
+			expected: nil, expectError: true,
+		},
+		{
+			a: Shape{2, 3}, b: Shape{2, 3}, bias: Shape{3},
+			aData: []float32{1, 2, 3, 4, 5, 6}, bData: []float32{7, 8, 9, 10, 11, 12}, biasData: []float32{1, 1, 1},
 			expected: nil, expectError: true,
 		},
 	}
