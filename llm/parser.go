@@ -562,16 +562,16 @@ func unicodeToBytes(tokens []string) {
 	}
 }
 
-func (g *GGUFFile) GetTokensMap() map[string]int {
+func (g *GGUFFile) GetTokensMap() map[string]int32 {
 	tokens := g.KVs["tokenizer.ggml.tokens"].([]string)
-	tm := make(map[string]int, len(tokens))
+	tm := make(map[string]int32, len(tokens))
 	isGPT2 := g.KVs["tokenizer.ggml.model"] == "gpt2"
 
 	if isGPT2 {
 		unicodeToBytes(tokens)
 	}
 	for i, t := range tokens {
-		tm[t] = i
+		tm[t] = int32(i)
 	}
 	return tm
 }

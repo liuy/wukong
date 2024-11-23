@@ -8,7 +8,7 @@ import (
 
 type Llama3Handler struct{}
 
-func getTokensFrom(path string) (map[string]int, error) {
+func getTokensFrom(path string) (map[string]int32, error) {
 	mergeableTokens, err := loadTokenBpe(path)
 	if err != nil {
 		return nil, err
@@ -17,7 +17,7 @@ func getTokensFrom(path string) (map[string]int, error) {
 
 	reservedSpecialTokensCount := 256
 
-	tokens := make(map[string]int, mergeableCount+reservedSpecialTokensCount)
+	tokens := make(map[string]int32, mergeableCount+reservedSpecialTokensCount)
 	specialTokensArr := []string{
 		"<|begin_of_text|>",
 		"<|end_of_text|>",
@@ -39,7 +39,7 @@ func getTokensFrom(path string) (map[string]int, error) {
 	specialTokensArr = append(specialTokensArr, reservedTokensArr...)
 
 	for id, t := range specialTokensArr {
-		tokens[t] = mergeableCount + id
+		tokens[t] = int32(mergeableCount + id)
 	}
 
 	for t, id := range mergeableTokens {
@@ -48,8 +48,8 @@ func getTokensFrom(path string) (map[string]int, error) {
 	return tokens, nil
 }
 
-func (m *Llama3Handler) Initialize(toker *Tokenizer, toks map[string]int) {
-	toker.TokenToId = make(map[string]int, len(toks))
+func (m *Llama3Handler) Initialize(toker *Tokenizer, toks map[string]int32) {
+	toker.TokenToId = make(map[string]int32, len(toks))
 	toker.IdToToken = make([]string, len(toks))
 	for token, id := range toks {
 		toker.TokenToId[token] = id
@@ -66,8 +66,8 @@ func (m *Llama3Handler) Initialize(toker *Tokenizer, toks map[string]int) {
 }
 
 // <|begin_of_text|><|start_header_id|>role<|end_header_id|>\n\n
-func (m *Llama3Handler) EncodeHeader(t *Tokenizer, message map[string]string) []int {
-	ids := []int{}
+func (m *Llama3Handler) EncodeHeader(t *Tokenizer, message map[string]string) []int32 {
+	ids := []int32{}
 	ids = append(ids, t.TokenToId["<|start_header_id|>"])
 	ids = append(ids, t.Encode(message["role"])...)
 	ids = append(ids, t.TokenToId["<|end_header_id|>"])
@@ -76,7 +76,7 @@ func (m *Llama3Handler) EncodeHeader(t *Tokenizer, message map[string]string) []
 }
 
 // content<|eot_id|>
-func (m *Llama3Handler) EncodeContent(t *Tokenizer, message map[string]string) []int {
+func (m *Llama3Handler) EncodeContent(t *Tokenizer, message map[string]string) []int32 {
 	ids := t.EncodeHeader(message)
 	ids = append(ids, t.Encode(strings.TrimSpace(message["content"]))...)
 	ids = append(ids, t.EotId)

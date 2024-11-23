@@ -11,33 +11,33 @@ import (
 )
 
 type ModelHandler interface {
-	Initialize(t *Tokenizer, toks map[string]int)
-	EncodeHeader(t *Tokenizer, message map[string]string) []int
-	EncodeContent(t *Tokenizer, message map[string]string) []int
+	Initialize(t *Tokenizer, toks map[string]int32)
+	EncodeHeader(t *Tokenizer, message map[string]string) []int32
+	EncodeContent(t *Tokenizer, message map[string]string) []int32
 }
 
 type Tokenizer struct {
-	TokenToId map[string]int
+	TokenToId map[string]int32
 	IdToToken []string
 	Pattern   *regexp.Regexp
 	VocabSize int
-	BosId     int
-	EosId     int
-	EomId     int
-	EotId     int
-	PadId     int
-	UnknownId int
+	BosId     int32
+	EosId     int32
+	EomId     int32
+	EotId     int32
+	PadId     int32
+	UnknownId int32
 	ModelHandler
 }
 
-func NewTokenizer(tokens map[string]int, m ModelHandler) *Tokenizer {
+func NewTokenizer(tokens map[string]int32, m ModelHandler) *Tokenizer {
 	tokenizer := &Tokenizer{}
 	tokenizer.ModelHandler = m
 	tokenizer.Initialize(tokens)
 	return tokenizer
 }
 
-func loadTokenBpe(vocabFilePath string) (map[string]int, error) {
+func loadTokenBpe(vocabFilePath string) (map[string]int32, error) {
 	vocabFile, err := os.Open(vocabFilePath)
 	if err != nil {
 		return nil, err
@@ -47,7 +47,7 @@ func loadTokenBpe(vocabFilePath string) (map[string]int, error) {
 	fileScanner := bufio.NewScanner(vocabFile)
 	fileScanner.Split(bufio.ScanLines)
 
-	result := make(map[string]int)
+	result := make(map[string]int32)
 
 	for fileScanner.Scan() {
 		lineParts := strings.Split(fileScanner.Text(), " ")
@@ -59,24 +59,24 @@ func loadTokenBpe(vocabFilePath string) (map[string]int, error) {
 		if err != nil {
 			return nil, err
 		}
-		result[string(token)] = id
+		result[string(token)] = int32(id)
 	}
 	return result, nil
 }
 
-func (t *Tokenizer) BytePairMerge(piece string) []int {
+func (t *Tokenizer) BytePairMerge(piece string) []int32 {
 	parts := make([]struct {
-		rank int
-		idx  int
+		rank int32
+		idx  int32
 	}, len(piece)+1)
 
-	minRank := math.MaxInt32
-	minIdx := 0
-	strLen := len(piece)
+	var minRank int32 = math.MaxInt32
+	var minIdx int32 = 0
+	var strLen int32 = int32(len(piece))
 
 	// Initial ranking pass
-	for i := 0; i < strLen-1; i++ {
-		rank := math.MaxInt32
+	for i := int32(0); i < strLen-1; i++ {
+		var rank int32 = math.MaxInt32
 
 		// Check if we have a valid 2-byte sequence
 		if i+1 < strLen {
@@ -100,8 +100,8 @@ func (t *Tokenizer) BytePairMerge(piece string) []int {
 	parts[strLen].rank = math.MaxInt32
 	parts[strLen].idx = strLen
 
-	getRankFn := func(parts []struct{ rank, idx int }, i int) int {
-		if i+3 >= len(parts) {
+	getRankFn := func(parts []struct{ rank, idx int32 }, i int32) int32 {
+		if i+3 >= int32(len(parts)) {
 			return math.MaxInt32
 		}
 
@@ -113,7 +113,7 @@ func (t *Tokenizer) BytePairMerge(piece string) []int {
 	}
 
 	// Main merge loop
-	partsLen := len(piece) + 1
+	partsLen := int32(len(piece) + 1)
 	for minRank != math.MaxInt32 {
 		i := minIdx
 		// Update ranks
@@ -130,7 +130,7 @@ func (t *Tokenizer) BytePairMerge(piece string) []int {
 
 		// Find new minimum
 		minRank = math.MaxInt32
-		for j := 0; j < partsLen-1; j++ {
+		for j := int32(0); j < partsLen-1; j++ {
 			if parts[j].rank < minRank {
 				minRank = parts[j].rank
 				minIdx = j
@@ -139,8 +139,8 @@ func (t *Tokenizer) BytePairMerge(piece string) []int {
 	}
 
 	// Build result
-	splitIds := make([]int, 0, partsLen-1)
-	for i := 0; i < partsLen-1; i++ {
+	splitIds := make([]int32, 0, partsLen-1)
+	for i := int32(0); i < partsLen-1; i++ {
 		start := parts[i].idx
 		end := parts[i+1].idx
 		token := piece[start:end]
@@ -155,9 +155,9 @@ func (t *Tokenizer) BytePairMerge(piece string) []int {
 }
 
 // Convert text to a sequence of token IDs
-func (t *Tokenizer) Encode(text string) []int {
+func (t *Tokenizer) Encode(text string) []int32 {
 	estimatedTokens := len(text) / 4
-	ids := make([]int, 0, estimatedTokens)
+	ids := make([]int32, 0, estimatedTokens)
 
 	matches := t.Pattern.FindAllStringSubmatchIndex(text, -1)
 	for i, match := range matches {
@@ -186,7 +186,7 @@ func (t *Tokenizer) Encode(text string) []int {
 }
 
 // Convert a sequence of token IDs to text
-func (t *Tokenizer) Decode(ids []int) string {
+func (t *Tokenizer) Decode(ids []int32) string {
 	// Assuming average token length of 4 characters as an estimation
 	capacity := len(ids) * 4
 
@@ -200,14 +200,14 @@ func (t *Tokenizer) Decode(ids []int) string {
 	return sb.String()
 }
 
-func (t *Tokenizer) EncodeHeader(message map[string]string) []int {
+func (t *Tokenizer) EncodeHeader(message map[string]string) []int32 {
 	return t.ModelHandler.EncodeHeader(t, message)
 }
 
-func (t *Tokenizer) EncodeContent(message map[string]string) []int {
+func (t *Tokenizer) EncodeContent(message map[string]string) []int32 {
 	return t.ModelHandler.EncodeContent(t, message)
 }
 
-func (t *Tokenizer) Initialize(toks map[string]int) {
+func (t *Tokenizer) Initialize(toks map[string]int32) {
 	t.ModelHandler.Initialize(t, toks)
 }
