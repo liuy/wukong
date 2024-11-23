@@ -98,6 +98,19 @@ func (t *Tensor) Format(f fmt.State, c rune) {
 	}
 }
 
+func (t *Tensor) Embedding(ids *Tensor) *Tensor {
+	ret := &Tensor{}
+	ret.operands = []*Tensor{t, ids}
+	ret.operator = &Operator{"Embedding", func(arrs ...*Array) (*Array, error) {
+		a, err := arrs[0].Embedding(arrs[1])
+		if err != nil {
+			return nil, err
+		}
+		return a, nil
+	}}
+	return ret
+}
+
 func drawTensor(t *Tensor) string {
 	var sb strings.Builder
 	drawRecursive(t, &sb, "", true, true)

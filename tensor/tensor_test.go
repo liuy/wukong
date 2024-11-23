@@ -112,3 +112,16 @@ func TestTensorFormat(t *testing.T) {
 	// fmt.Printf("%g", f) // uncomment to see the tensor graph
 	assert.Equal(t, graph, fmt.Sprintf("%g", f))
 }
+
+func TestTensorEmbedding(t *testing.T) {
+	e, err := MakeTensor(Shape{3, 4}, []int32{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12})
+	assert.NoErr(t, err)
+	assert.NotNil(t, e)
+	ids, err := MakeTensor(Shape{3}, []int32{1, 2, 0})
+	assert.NoErr(t, err)
+	assert.NotNil(t, ids)
+	res := e.Embedding(ids)
+	err = res.Forward()
+	assert.NoErr(t, err)
+	assert.Equal(t, []int32{5, 6, 7, 8, 9, 10, 11, 12, 1, 2, 3, 4}, res.Data())
+}
