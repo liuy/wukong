@@ -33,7 +33,7 @@ type Runner interface {
 
 // Array is a multi-dimensional array of any type in a row-major order. It is represented by a Shape in the
 // form of a slice of integers, e.g, [2, 3, 4] for a 3D Array and a storage that contains the data of any type
-// in a contiguous block of memory.
+// in a contiguous block of memory, which a runner can perform device specific operations on.
 type Array struct {
 	Shape
 	Storage
@@ -57,11 +57,20 @@ func (s Shape) Len() int {
 	return product([]int(s))
 }
 
-// Returns the number of dimensions in the Shape
-func (s Shape) Dims() int { return len(s) }
+// NumDims Returns the number of dimensions in the Shape
+func (s Shape) NumDims() int { return len(s) }
+
+// DimAt returns the dimension at a given index with support for negative indexing.
+// Out of range indices will panic
+func (s Shape) DimAt(idx int) int {
+	if idx < 0 {
+		return s[len(s)+idx]
+	}
+	return s[idx]
+}
 
 // Returns true if Array is scalar, false otherwise
-func (s Shape) IsScalar() bool { return s.Dims() == 0 }
+func (s Shape) IsScalar() bool { return s.NumDims() == 0 }
 
 func (s Shape) Format(st fmt.State, r rune) {
 	st.Write([]byte("("))
@@ -105,13 +114,12 @@ func MakeArrayFrom(s Shape, data any) (ret *Array, e error) {
 func (t *Array) Format(st fmt.State, r rune) {
 	s := fmt.Sprintf("Shape: %v\nType: %v", t.Shape, t.ElemType())
 	data := "\nData:\n"
-	dims := t.Shape
-	stride := dims[len(dims)-1]
+	stride := t.DimAt(-1)
 	d := t.ToHost()
 	for i := 0; i < t.Len(); i++ {
 		if i > 0 && i%stride == 0 {
 			data += "\n"
-			if i%(stride*dims[len(dims)-2]) == 0 {
+			if i%(stride*t.DimAt(-2)) == 0 {
 				data += "\n"
 			}
 		}
@@ -185,7 +193,7 @@ func (r *cudaRunner) DeviceFree(a *Array) {
 }
 
 func (r *cudaRunner) Softmax(a *Array) (*Array, error) {
-	col := a.Shape[len(a.Shape)-1]
+	col := a.DimAt(-1)
 	row := a.Len() / col
 	out := C.cuda_malloc(C.size_t(row * col * a.ElemSize()))
 	C.cuda_softmax(out, a.dptr, C.int(row), C.int(col))
@@ -196,22 +204,22 @@ func (r *cudaRunner) Softmax(a *Array) (*Array, error) {
 
 func (r *cudaRunner) Matmul(a, b, bias *Array) (*Array, error) {
 	// For now we only support b as a 2D array
-	if a.Dims() < 2 || b.Dims() != 2 {
+	if a.NumDims() < 2 || b.NumDims() != 2 {
 		return nil, fmt.Errorf("arrays must have at least 2 dimensions")
 	}
-	if a.Shape[len(a.Shape)-1] != b.Shape[len(b.Shape)-1] {
+	if a.DimAt(-1) != b.DimAt(-1) {
 		return nil, fmt.Errorf("array shapes do not match")
 	}
 	var biasPtr unsafe.Pointer = nil
 	if bias != nil {
 		biasPtr = bias.dptr
-		if bias.Len() != b.Shape[len(b.Shape)-2] {
+		if bias.Len() != b.DimAt(-2) {
 			return nil, fmt.Errorf("bias shape does not match")
 		}
 	}
-	column := a.Shape[len(a.Shape)-1]
+	column := a.DimAt(-1)
 	row := a.Len() / column
-	oc := b.Shape[len(b.Shape)-2]
+	oc := b.DimAt(-2)
 	out := C.cuda_malloc(C.size_t(row * oc * a.ElemSize()))
 	C.cuda_matmul(out, a.dptr, b.dptr, biasPtr, C.int(row), C.int(column), C.int(oc))
 	shape := a.Shape
@@ -225,17 +233,17 @@ func (r cudaRunner) Embedding(embd, ids *Array) (*Array, error) {
 	if ids.ElemType() != reflect.TypeOf(int32(0)) {
 		return nil, fmt.Errorf("index must be an int32 integer")
 	}
-	if ids.Dims() > 2 {
+	if ids.NumDims() > 2 {
 		return nil, fmt.Errorf("index must be 1D or 2D")
 	}
-	if embd.Dims() != 2 {
+	if embd.NumDims() != 2 {
 		return nil, fmt.Errorf("embedding must be 2D")
 	}
-	col := embd.Shape[1]
-	row := ids.Shape[ids.Dims()-1]
+	col := embd.DimAt(1)
+	row := ids.DimAt(-1)
 	batch := 1
-	if ids.Dims() == 2 {
-		batch = ids.Shape[0]
+	if ids.NumDims() == 2 {
+		batch = ids.DimAt(0)
 	}
 	out := C.cuda_malloc(C.size_t(batch * row * col * embd.ElemSize()))
 	C.cuda_get_embeddings(out, ids.dptr, embd.dptr, C.int(batch), C.int(row), C.int(col))

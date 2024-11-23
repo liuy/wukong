@@ -59,10 +59,22 @@ func TestArraySize(t *testing.T) {
 	}
 }
 
-func TestShapeDims(t *testing.T) {
+func TestShapeNumDims(t *testing.T) {
 	s := Shape{2, 3, 4}
 	expected := 3
-	assert.Equal(t, s.Dims(), expected)
+	assert.Equal(t, s.NumDims(), expected)
+}
+
+func TestShapeDimAt(t *testing.T) {
+	s := Shape{2, 3, 4}
+	assert.Equal(t, s.DimAt(0), 2)
+	assert.Equal(t, s.DimAt(1), 3)
+	assert.Equal(t, s.DimAt(2), 4)
+	assert.Equal(t, s.DimAt(-1), 4)
+	assert.Equal(t, s.DimAt(-2), 3)
+	assert.Equal(t, s.DimAt(-3), 2)
+	assert.Panic(t, func() { s.DimAt(3) })
+	assert.Panic(t, func() { s.DimAt(-4) })
 }
 
 func TestShapeIsScalar(t *testing.T) {

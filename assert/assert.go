@@ -115,3 +115,15 @@ func isNil(v any) bool {
 		return false
 	}
 }
+
+// Panic asserts that the function panics.
+func Panic(t TB, f func()) {
+	t.Helper()
+	defer func() {
+		if r := recover(); r == nil {
+			_, file, line, _ := runtime.Caller(1)
+			t.Errorf("\n%s:%d\nExpected panic\nGot: none", file, line)
+		}
+	}()
+	f()
+}
