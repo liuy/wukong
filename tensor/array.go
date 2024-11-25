@@ -15,11 +15,54 @@ import (
 	"unsafe"
 )
 
+// DType represents the type of ondisk tensor data, extended from GGMLType
+type DType uint32
+
+const (
+	GGML_TYPE_F32      DType = iota // 0
+	GGML_TYPE_F16                   // 1
+	GGML_TYPE_Q4_0                  // 2
+	GGML_TYPE_Q4_1                  // 3
+	GGML_TYPE_Q4_2                  // 4 support has been removed
+	GGML_TYPE_Q4_3                  // 5 support has been removed
+	GGML_TYPE_Q5_0                  // 6
+	GGML_TYPE_Q5_1                  // 7
+	GGML_TYPE_Q8_0                  // 8
+	GGML_TYPE_Q8_1                  // 9
+	GGML_TYPE_Q2_K                  // 10
+	GGML_TYPE_Q3_K                  // 11
+	GGML_TYPE_Q4_K                  // 12
+	GGML_TYPE_Q5_K                  // 13
+	GGML_TYPE_Q6_K                  // 14
+	GGML_TYPE_Q8_K                  // 15
+	GGML_TYPE_IQ2_XXS               // 16
+	GGML_TYPE_IQ2_XS                // 17
+	GGML_TYPE_IQ3_XXS               // 18
+	GGML_TYPE_IQ1_S                 // 19
+	GGML_TYPE_IQ4_NL                // 20
+	GGML_TYPE_IQ3_S                 // 21
+	GGML_TYPE_IQ2_S                 // 22
+	GGML_TYPE_IQ4_XS                // 23
+	GGML_TYPE_I8                    // 24
+	GGML_TYPE_I16                   // 25
+	GGML_TYPE_I32                   // 26
+	GGML_TYPE_I64                   // 27
+	GGML_TYPE_F64                   // 28
+	GGML_TYPE_IQ1_M                 // 29
+	GGML_TYPE_BF16                  // 30
+	GGML_TYPE_Q4_0_4_4              // 31
+	GGML_TYPE_Q4_0_4_8              // 32
+	GGML_TYPE_Q4_0_8_8              // 33
+	GGML_TYPE_TQ1_0                 // 34
+	GGML_TYPE_TQ2_0                 // 35
+)
+
 type Shape []int
 
 type Storage struct {
 	dptr  unsafe.Pointer
-	dtype reflect.Type
+	atype reflect.Type // Type of the Array to interact with go
+	dtype DType
 }
 
 type Runner interface {
@@ -87,7 +130,7 @@ func NewArray(s Shape, t reflect.Type) *Array {
 	a := &Array{
 		s,
 		Storage{
-			dtype: t,
+			atype: t,
 		},
 		&cudaRunner{},
 	}
@@ -142,10 +185,10 @@ func CudaSetup()    { C.cuda_init() }
 func CudaTeardown() { C.cuda_fini() }
 
 // Returns the element type of the Array
-func (a *Array) ElemType() reflect.Type { return a.dtype.Elem() }
+func (a *Array) ElemType() reflect.Type { return a.atype.Elem() }
 
 // Returns the element size of the Array in bytes
-func (a *Array) ElemSize() int { return int(a.dtype.Elem().Size()) }
+func (a *Array) ElemSize() int { return int(a.atype.Elem().Size()) }
 
 // Returns the total size of the Array in bytes
 func (a *Array) Size() int { return a.Len() * a.ElemSize() }
@@ -179,7 +222,7 @@ func (r *cudaRunner) ToDevice(a *Array, src unsafe.Pointer) {
 }
 
 func (r *cudaRunner) ToHost(a *Array) reflect.Value {
-	dst := reflect.MakeSlice(a.dtype, a.Len(), a.Len())
+	dst := reflect.MakeSlice(a.atype, a.Len(), a.Len())
 	C.cuda_to_host(unsafe.Pointer(dst.Pointer()), a.dptr, C.size_t(a.Size()))
 	return dst
 }
@@ -197,7 +240,7 @@ func (r *cudaRunner) Softmax(a *Array) (*Array, error) {
 	row := a.Len() / col
 	out := C.cuda_malloc(C.size_t(row * col * a.ElemSize()))
 	C.cuda_softmax(out, a.dptr, C.int(row), C.int(col))
-	ret := NewArray(a.Shape, a.dtype)
+	ret := NewArray(a.Shape, a.atype)
 	ret.dptr = out
 	return ret, nil
 }
@@ -224,7 +267,7 @@ func (r *cudaRunner) Matmul(a, b, bias *Array) (*Array, error) {
 	C.cuda_matmul(out, a.dptr, b.dptr, biasPtr, C.int(row), C.int(column), C.int(oc))
 	shape := a.Shape
 	shape[len(shape)-1] = oc
-	ret := NewArray(shape, a.dtype)
+	ret := NewArray(shape, a.atype)
 	ret.dptr = out
 	return ret, nil
 }
@@ -247,7 +290,7 @@ func (r cudaRunner) Embedding(embd, ids *Array) (*Array, error) {
 	}
 	out := C.cuda_malloc(C.size_t(batch * row * col * embd.ElemSize()))
 	C.cuda_embedding(out, ids.dptr, embd.dptr, C.int(batch), C.int(row), C.int(col))
-	ret := NewArray(Shape{batch, row, col}, embd.dtype)
+	ret := NewArray(Shape{batch, row, col}, embd.atype)
 	ret.dptr = out
 	return ret, nil
 }

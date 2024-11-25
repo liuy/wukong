@@ -3,52 +3,11 @@ package llm
 import (
 	"encoding/binary"
 	"fmt"
-	"io"
-	"os"
+
+	"github.com/liuy/wukong/tensor"
 )
 
-// GGMLType represents the type of tensor data
-type GGMLType uint32
-
-const (
-	GGML_TYPE_F32      GGMLType = iota // 0
-	GGML_TYPE_F16                      // 1
-	GGML_TYPE_Q4_0                     // 2
-	GGML_TYPE_Q4_1                     // 3
-	GGML_TYPE_Q4_2                     // 4 support has been removed
-	GGML_TYPE_Q4_3                     // 5 support has been removed
-	GGML_TYPE_Q5_0                     // 6
-	GGML_TYPE_Q5_1                     // 7
-	GGML_TYPE_Q8_0                     // 8
-	GGML_TYPE_Q8_1                     // 9
-	GGML_TYPE_Q2_K                     // 10
-	GGML_TYPE_Q3_K                     // 11
-	GGML_TYPE_Q4_K                     // 12
-	GGML_TYPE_Q5_K                     // 13
-	GGML_TYPE_Q6_K                     // 14
-	GGML_TYPE_Q8_K                     // 15
-	GGML_TYPE_IQ2_XXS                  // 16
-	GGML_TYPE_IQ2_XS                   // 17
-	GGML_TYPE_IQ3_XXS                  // 18
-	GGML_TYPE_IQ1_S                    // 19
-	GGML_TYPE_IQ4_NL                   // 20
-	GGML_TYPE_IQ3_S                    // 21
-	GGML_TYPE_IQ2_S                    // 22
-	GGML_TYPE_IQ4_XS                   // 23
-	GGML_TYPE_I8                       // 24
-	GGML_TYPE_I16                      // 25
-	GGML_TYPE_I32                      // 26
-	GGML_TYPE_I64                      // 27
-	GGML_TYPE_F64                      // 28
-	GGML_TYPE_IQ1_M                    // 29
-	GGML_TYPE_BF16                     // 30
-	GGML_TYPE_Q4_0_4_4                 // 31
-	GGML_TYPE_Q4_0_4_8                 // 32
-	GGML_TYPE_Q4_0_8_8                 // 33
-	GGML_TYPE_TQ1_0                    // 34
-	GGML_TYPE_TQ2_0                    // 35
-	GGML_TYPE_COUNT
-)
+type DType = tensor.DType
 
 // GGUFType represents the type of metadata value
 type GGUFType uint32
@@ -121,11 +80,6 @@ type GGUFHeader struct {
 	KVCount uint64
 }
 
-// alignOffset aligns an offset to the specified alignment
-func alignOffset(offset int64, alignment int64) int64 {
-	return offset + (alignment-(offset%alignment))%alignment
-}
-
 func reverseSlice(slice []uint64) {
 	if len(slice) == 0 || len(slice) == 1 {
 		return
@@ -148,7 +102,7 @@ type GGUFTensorInfo struct {
 	// The dimensions of the tensor.
 	Dims [GGML_MAX_DIMS]uint64
 	// The type of the tensor.
-	Type GGMLType
+	Type DType
 	// The offset of the tensor's data in this file in bytes.
 	//
 	// This offset is relative to `tensor_data`, not to the start
@@ -164,6 +118,7 @@ const GGUF_DEFAULT_ALIGNMENT = 32
 
 // GGUFFile represents a complete GGUF file structure
 type GGUFFile struct {
+	File *mmapReader
 	// The header of the file.
 	Header GGUFHeader
 
@@ -183,22 +138,22 @@ type GGUFFile struct {
 	// Each tensor's data must be stored within this array, and located through its `tensor_infos` entry.
 	// The offset of each tensor's data must be a multiple of `ALIGNMENT`, and the space between tensors
 	// should be padded to `ALIGNMENT` bytes.
-	Alignment  int64
-	Offset     int64 // Offset of 'data' from the start of the file.
-	Size       int64 // Size of 'data' in bytes.
-	TensorData []byte
+	Alignment int64
+	Offset    int64 // Offset of 'data' from the start of the file.
+	// Size       int64 // Size of 'data' in bytes.
+	// TensorData []byte
 }
 
 // GGUFParser reads a GGUF file and returns a parsed GGUFFile structure
 func GGUFParser(filename string) (*GGUFFile, error) {
-	file, err := os.Open(filename)
+	file, err := MmapOpen(filename)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open file: %w", err)
 	}
-	defer file.Close()
 
 	gguf := &GGUFFile{
 		Alignment: GGUF_DEFAULT_ALIGNMENT,
+		File:      file,
 	}
 
 	if err := binary.Read(file, binary.LittleEndian, &gguf.Header); err != nil {
@@ -222,51 +177,34 @@ func GGUFParser(filename string) (*GGUFFile, error) {
 		}
 	}
 
-	if gguf.Header.TensorCount != 0 {
-		gguf.TensorInfos = make(map[string]GGUFTensorInfo, gguf.Header.TensorCount)
-		for i := uint64(0); i < gguf.Header.TensorCount; i++ {
-			name, info, err := readTensorInfo(file)
-			if err != nil {
-				return nil, fmt.Errorf("failed to read tensor info %d: %w", i, err)
-			}
-			gguf.TensorInfos[name] = info
-		}
-
-		gguf.Offset, err = file.Seek(0, io.SeekCurrent)
-		if err != nil {
-			return nil, fmt.Errorf("failed to get tensor data offset: %w", err)
-		}
-
-		gguf.Offset = alignOffset(gguf.Offset, gguf.Alignment)
-		if _, err := file.Seek(gguf.Offset, io.SeekStart); err != nil {
-			return nil, fmt.Errorf("failed to seek to aligned tensor data offset: %w", err)
-		}
-
-		fileInfo, err := file.Stat()
-		if err != nil {
-			return nil, fmt.Errorf("failed to get file info: %w", err)
-		}
-
-		gguf.Size = fileInfo.Size() - gguf.Offset
-
-		gguf.TensorData = make([]byte, gguf.Size)
-		if _, err := file.Read(gguf.TensorData); err != nil {
-			return nil, fmt.Errorf("failed to read tensor data: %w", err)
-		}
+	if gguf.Header.TensorCount == 0 {
+		file.Close()
+		return gguf, nil
 	}
+
+	gguf.TensorInfos = make(map[string]GGUFTensorInfo, gguf.Header.TensorCount)
+	for i := uint64(0); i < gguf.Header.TensorCount; i++ {
+		name, info, err := readTensorInfo(file)
+		if err != nil {
+			return nil, fmt.Errorf("failed to read tensor info %d: %w", i, err)
+		}
+		gguf.TensorInfos[name] = info
+	}
+
+	gguf.Offset = file.AlignOffset(gguf.Alignment)
 
 	return gguf, nil
 }
 
 // readGGUFString reads a GGUF string from the file and transforms it to go string
-func readGGUFString(file *os.File) (string, error) {
+func readGGUFString(file *mmapReader) (string, error) {
 	var length uint64
 	if err := binary.Read(file, binary.LittleEndian, &length); err != nil {
 		return "", fmt.Errorf("failed to read string length: %w", err)
 	}
 
 	str := make([]byte, length)
-	if _, err := file.Read(str); err != nil {
+	if err := binary.Read(file, binary.LittleEndian, &str); err != nil {
 		return "", fmt.Errorf("failed to read string data: %w", err)
 	}
 
@@ -274,7 +212,7 @@ func readGGUFString(file *os.File) (string, error) {
 }
 
 // readGGUFValue reads a GGUF value from the file and transforms it to go value
-func readGGUFValue(file *os.File, valueType GGUFType) (any, error) {
+func readGGUFValue(file *mmapReader, valueType GGUFType) (any, error) {
 	var value any
 
 	switch valueType {
@@ -429,7 +367,7 @@ func readGGUFValue(file *os.File, valueType GGUFType) (any, error) {
 	return value, nil
 }
 
-func readKV(file *os.File) (GGUFKV, error) {
+func readKV(file *mmapReader) (GGUFKV, error) {
 	var kv GGUFKV
 
 	key, err := readGGUFString(file)
@@ -452,7 +390,7 @@ func readKV(file *os.File) (GGUFKV, error) {
 	return kv, nil
 }
 
-func readTensorInfo(file *os.File) (string, GGUFTensorInfo, error) {
+func readTensorInfo(file *mmapReader) (string, GGUFTensorInfo, error) {
 	var info GGUFTensorInfo
 
 	name, err := readGGUFString(file)

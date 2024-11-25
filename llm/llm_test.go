@@ -113,16 +113,19 @@ func TestGGUFGetConfig(t *testing.T) {
 	ids := m.Encode(text)
 	assert.Equal(t, m.Decode(ids), text)
 
-	g := GGUFFile{GGUFHeader{}, map[string]any{
-		"general.architecture":               "llama",
-		"llama.context_length":               uint32(131072),
-		"llama.block_count":                  uint32(28),
-		"llama.attention.head_count":         uint32(24),
-		"llama.embedding_length":             uint32(3072),
-		"llama.rope.freq_base":               float32(500000),
-		"llama.attention.layer_norm_epsilon": float32(1e-05),
-		"llama.attention.head_count_kv":      uint32(8),
-	}, nil, 0, 0, 0, nil}
+	g := GGUFFile{
+		Header: GGUFHeader{},
+		KVs: map[string]any{
+			"general.architecture":               "llama",
+			"llama.context_length":               uint32(131072),
+			"llama.block_count":                  uint32(28),
+			"llama.attention.head_count":         uint32(24),
+			"llama.embedding_length":             uint32(3072),
+			"llama.rope.freq_base":               float32(500000),
+			"llama.attention.layer_norm_epsilon": float32(1e-05),
+			"llama.attention.head_count_kv":      uint32(8),
+		},
+	}
 	assert.Equal(t, g.GetConfig(), m.Config)
 }
 
@@ -132,4 +135,96 @@ func BenchmarkGGUFParser(b *testing.B) {
 		assert.NoErr(b, err)
 		gguf.GetTokensMap()
 	}
+}
+
+func TestMmapReader(t *testing.T) {
+	content := []byte("Hello, World! This is a test file.")
+	tmpfile, err := os.CreateTemp("", "mmaptest")
+	assert.NoErr(t, err)
+	defer os.Remove(tmpfile.Name())
+
+	_, err = tmpfile.Write(content)
+	assert.NoErr(t, err)
+	err = tmpfile.Close()
+	assert.NoErr(t, err)
+
+	t.Run("Open", func(t *testing.T) {
+		reader, err := MmapOpen(tmpfile.Name())
+		assert.NoErr(t, err)
+		defer reader.Close()
+
+		assert.Equal(t, len(content), reader.Len())
+	})
+
+	t.Run("Read", func(t *testing.T) {
+		reader, err := MmapOpen(tmpfile.Name())
+		assert.NoErr(t, err)
+		defer reader.Close()
+
+		buf := make([]byte, 5)
+		n, err := reader.Read(buf)
+		assert.NoErr(t, err)
+		assert.Equal(t, 5, n)
+		assert.Equal(t, "Hello", string(buf))
+	})
+
+	t.Run("ReadAt", func(t *testing.T) {
+		reader, err := MmapOpen(tmpfile.Name())
+		assert.NoErr(t, err)
+		defer reader.Close()
+
+		buf := make([]byte, 5)
+		n, err := reader.ReadAt(buf, 7)
+		assert.NoErr(t, err)
+		assert.Equal(t, 5, n)
+		assert.Equal(t, "World", string(buf))
+	})
+
+	t.Run("AlignOffset", func(t *testing.T) {
+		reader, err := MmapOpen(tmpfile.Name())
+		assert.NoErr(t, err)
+		defer reader.Close()
+
+		reader.offset = 5
+		aligned := reader.AlignOffset(8)
+		assert.Equal(t, int64(8), aligned)
+	})
+
+	t.Run("ErrorCases", func(t *testing.T) {
+		// Test reading from closed reader
+		reader, err := MmapOpen(tmpfile.Name())
+		assert.NoErr(t, err)
+		reader.Close()
+
+		buf := make([]byte, 5)
+		_, err = reader.Read(buf)
+		assert.Error(t, err)
+
+		// Test invalid ReadAt offset
+		reader, err = MmapOpen(tmpfile.Name())
+		assert.NoErr(t, err)
+		defer reader.Close()
+
+		_, err = reader.ReadAt(buf, -1)
+		assert.Error(t, err)
+
+		_, err = reader.ReadAt(buf, int64(len(content)+1))
+		assert.Error(t, err)
+	})
+
+	t.Run("EOF", func(t *testing.T) {
+		reader, err := MmapOpen(tmpfile.Name())
+		assert.NoErr(t, err)
+		defer reader.Close()
+
+		buf := make([]byte, 100)
+		n, err := reader.Read(buf)
+		assert.Equal(t, io.EOF, err)
+		assert.Equal(t, len(content), n)
+	})
+
+	t.Run("NonExistentFile", func(t *testing.T) {
+		_, err := MmapOpen("nonexistent.file")
+		assert.Error(t, err)
+	})
 }

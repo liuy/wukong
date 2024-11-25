@@ -140,7 +140,7 @@ func TestArrayDeviceFree(t *testing.T) {
 	var text string
 	shape := Shape{2, 3}
 	v := reflect.ValueOf([]float32{1, 2, 3, 4, 5, 6})
-	a := &Array{shape, Storage{dtype: v.Type()}, &cudaRunner{}}
+	a := &Array{shape, Storage{atype: v.Type()}, &cudaRunner{}}
 	a.ToDevice(unsafe.Pointer(v.Pointer()))
 	assert.NotNil(t, a.dptr)
 	assert.Equal(t, []float32{1, 2, 3, 4, 5, 6}, a.ToHost().Interface().([]float32))
