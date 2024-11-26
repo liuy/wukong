@@ -76,7 +76,7 @@ type GGUFHeader struct {
 	KVCount uint64
 }
 
-func reverseSlice(slice []uint64) {
+func reverseSlice(slice []int) {
 	if len(slice) == 0 || len(slice) == 1 {
 		return
 	}
@@ -94,9 +94,9 @@ type GGUFTensorInfo struct {
 	// Name string // GGUF string is transformed to go string after parsing from file
 	// The number of dimensions in the tensor.
 	// Currently at most 4, but this may change in the future.
-	NumDims uint32
+	// NumDims uint32
 	// The dimensions of the tensor.
-	Dims [GGML_MAX_DIMS]uint64
+	Dims []int
 	// The type of the tensor.
 	Type DType
 	// The offset of the tensor's data in this file in bytes.
@@ -394,18 +394,24 @@ func readTensorInfo(file *mmapReader) (string, GGUFTensorInfo, error) {
 		return "", info, fmt.Errorf("failed to read tensor name: %w", err)
 	}
 
-	if err := binary.Read(file, binary.LittleEndian, &info.NumDims); err != nil {
+	var numDims uint32
+	if err := binary.Read(file, binary.LittleEndian, &numDims); err != nil {
 		return name, info, fmt.Errorf("failed to read number of dimensions: %w", err)
 	}
 
-	if info.NumDims > GGML_MAX_DIMS {
-		return name, info, fmt.Errorf("number of dimensions exceeds maximum: %d > %d", info.NumDims, GGML_MAX_DIMS)
+	if numDims > GGML_MAX_DIMS {
+		return name, info, fmt.Errorf("number of dimensions exceeds maximum: %d > %d", numDims, GGML_MAX_DIMS)
 	}
 
-	for i := uint32(0); i < info.NumDims; i++ {
-		if err := binary.Read(file, binary.LittleEndian, &info.Dims[i]); err != nil {
+	dims := make([]uint64, numDims)
+	for i := uint32(0); i < numDims; i++ {
+		if err := binary.Read(file, binary.LittleEndian, &dims[i]); err != nil {
 			return name, info, fmt.Errorf("failed to read dimension %d: %w", i, err)
 		}
+		if int(dims[i]) <= 0 {
+			return name, info, fmt.Errorf("dimension %d is not a valid uint64: %d", i, dims[i])
+		}
+		info.Dims = append(info.Dims, int(dims[i]))
 	}
 
 	if err := binary.Read(file, binary.LittleEndian, &info.Type); err != nil {
@@ -416,7 +422,7 @@ func readTensorInfo(file *mmapReader) (string, GGUFTensorInfo, error) {
 		return name, info, fmt.Errorf("failed to read tensor offset: %w", err)
 	}
 	// GGUF-convert reverses it for GGML, we reverse it back
-	reverseSlice(info.Dims[:info.NumDims])
+	reverseSlice(info.Dims)
 
 	return name, info, nil
 }
@@ -432,11 +438,7 @@ func (g *GGUFFile) Format(st fmt.State, r rune) {
 		}
 	}
 	for name, info := range g.TensorInfos {
-		s += fmt.Sprintf("%s, Dims[", name)
-		for i := uint32(0); i < info.NumDims-1; i++ {
-			s += fmt.Sprintf("%d ", info.Dims[i])
-		}
-		s += fmt.Sprintf("%d], Quant: %d\n", info.Dims[info.NumDims-1], info.Type)
+		s += fmt.Sprintf("Name: %s, Dims: %v, Quant: %d\n", name, info.Dims, info.Type)
 	}
 	fmt.Fprint(st, s)
 }
@@ -513,6 +515,16 @@ func (g *GGUFFile) GetTokenizer() *Tokenizer {
 	tokens := g.GetTokensMap()
 	tok := NewTokenizer(tokens, &Llama3Handler{})
 	return tok
+}
+
+// QuantShape returns the quantized shape of the GGUF tensor
+func (g *GGUFFile) TensorQuantShape(s Shape, t DType) (Shape, error) {
+	qinfo := ggufQuantInfo[t]
+	if s.GetDim(-1)%qinfo.blockSize != 0 {
+		return nil, fmt.Errorf("quantized shape %v is not aligned to %d", s, qinfo.typeSize)
+	}
+	s.SetDim(-1, s.GetDim(-1)/qinfo.blockSize*qinfo.typeSize)
+	return s, nil
 }
 
 func (g *GGUFFile) BuildTensor() *Tensor {

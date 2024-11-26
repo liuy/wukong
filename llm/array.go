@@ -57,6 +57,62 @@ const (
 	GGML_TYPE_TQ2_0                 // 35
 )
 
+const QK_K = 256
+
+// QuantInfo holds information about a quantization type
+type QuantInfo struct {
+	name      string
+	blockSize int
+	typeSize  int
+}
+
+// ggufQuantInfo maps DType to quantization information {name, blockSize, typeSize}
+var ggufQuantInfo = map[DType]QuantInfo{
+	GGML_TYPE_F32:      {"GGML_TYPE_F32", 1, 4},
+	GGML_TYPE_F16:      {"GGML_TYPE_F16", 1, 2},
+	GGML_TYPE_Q4_0:     {"GGML_TYPE_Q4_0", 32, 2 + 16},
+	GGML_TYPE_Q4_1:     {"GGML_TYPE_Q4_1", 32, 2 + 2 + 16},
+	GGML_TYPE_Q4_2:     {"GGML_TYPE_Q4_2", 32, 2 + 2 + 16},
+	GGML_TYPE_Q4_3:     {"GGML_TYPE_Q4_3", 32, 2 + 2 + 16},
+	GGML_TYPE_Q5_0:     {"GGML_TYPE_Q5_0", 32, 2 + 4 + 16},
+	GGML_TYPE_Q5_1:     {"GGML_TYPE_Q5_1", 32, 2 + 2 + 4 + 16},
+	GGML_TYPE_Q8_0:     {"GGML_TYPE_Q8_0", 32, 2 + 32},
+	GGML_TYPE_Q8_1:     {"GGML_TYPE_Q8_1", 32, 4 + 4 + 32},
+	GGML_TYPE_Q2_K:     {"GGML_TYPE_Q2_K", 256, 2 + 2 + QK_K/16 + QK_K/4},
+	GGML_TYPE_Q3_K:     {"GGML_TYPE_Q3_K", 256, 2 + QK_K/4 + QK_K/8 + 12},
+	GGML_TYPE_Q4_K:     {"GGML_TYPE_Q4_K", 256, 2 + 2 + QK_K/2 + 12},
+	GGML_TYPE_Q5_K:     {"GGML_TYPE_Q5_K", 256, 2 + 2 + QK_K/2 + QK_K/8 + 12},
+	GGML_TYPE_Q6_K:     {"GGML_TYPE_Q6_K", 256, 2 + QK_K/2 + QK_K/4 + QK_K/16},
+	GGML_TYPE_Q8_K:     {"GGML_TYPE_Q8_K", 256, 4 + QK_K + QK_K/8},
+	GGML_TYPE_IQ2_XXS:  {"GGML_TYPE_IQ2_XXS", 256, 2 + QK_K/4},
+	GGML_TYPE_IQ2_XS:   {"GGML_TYPE_IQ2_XS", 256, 2 + QK_K/4 + QK_K/32},
+	GGML_TYPE_IQ3_XXS:  {"GGML_TYPE_IQ3_XXS", 256, 2 + QK_K/4 + QK_K/8},
+	GGML_TYPE_IQ1_S:    {"GGML_TYPE_IQ1_S", 256, 2 + QK_K/8 + QK_K/16},
+	GGML_TYPE_IQ4_NL:   {"GGML_TYPE_IQ4_NL", 32, 2 + 16},
+	GGML_TYPE_IQ3_S:    {"GGML_TYPE_IQ3_S", 256, 2 + QK_K/4 + QK_K/8 + QK_K/32 + 4},
+	GGML_TYPE_IQ2_S:    {"GGML_TYPE_IQ2_S", 256, 2 + QK_K/4 + QK_K/16},
+	GGML_TYPE_IQ4_XS:   {"GGML_TYPE_IQ4_XS", 256, 2 + 2 + QK_K/2 + QK_K/64},
+	GGML_TYPE_I8:       {"GGML_TYPE_I8", 1, 1},
+	GGML_TYPE_I16:      {"GGML_TYPE_I16", 1, 2},
+	GGML_TYPE_I32:      {"GGML_TYPE_I32", 1, 4},
+	GGML_TYPE_I64:      {"GGML_TYPE_I64", 1, 8},
+	GGML_TYPE_F64:      {"GGML_TYPE_F64", 1, 8},
+	GGML_TYPE_IQ1_M:    {"GGML_TYPE_IQ1_M", 256, QK_K/8 + QK_K/16 + QK_K/32},
+	GGML_TYPE_BF16:     {"GGML_TYPE_BF16", 1, 2},
+	GGML_TYPE_Q4_0_4_4: {"GGML_TYPE_Q4_0_4_4", 32, 2 + 16},
+	GGML_TYPE_Q4_0_4_8: {"GGML_TYPE_Q4_0_4_8", 32, 2 + 16},
+	GGML_TYPE_Q4_0_8_8: {"GGML_TYPE_Q4_0_8_8", 32, 2 + 16},
+	GGML_TYPE_TQ1_0:    {"GGML_TYPE_TQ1_0", 256, 2 + 4*13},
+	GGML_TYPE_TQ2_0:    {"GGML_TYPE_TQ2_0", 256, 2 + 64},
+}
+
+func (t DType) String() string {
+	if info, ok := ggufQuantInfo[t]; ok {
+		return info.name
+	}
+	return fmt.Sprintf("GGML_TYPE_UNKNOWN(%d)", t)
+}
+
 type Shape []int
 
 type Storage struct {
@@ -103,13 +159,23 @@ func (s Shape) Len() int {
 // NumDims Returns the number of dimensions in the Shape
 func (s Shape) NumDims() int { return len(s) }
 
-// DimAt returns the dimension at a given index with support for negative indexing.
+// GetDim returns the dimension at a given index with support for negative indexing.
 // Out of range indices will panic
-func (s Shape) DimAt(idx int) int {
+func (s Shape) GetDim(idx int) int {
 	if idx < 0 {
 		return s[len(s)+idx]
 	}
 	return s[idx]
+}
+
+// Sets the dimension at a given index with support for negative indexing.
+// Out of range indices will panic
+func (s Shape) SetDim(idx int, v int) {
+	if idx < 0 {
+		s[len(s)+idx] = v
+	} else {
+		s[idx] = v
+	}
 }
 
 // Returns true if Array is scalar, false otherwise
@@ -157,12 +223,12 @@ func MakeArrayFrom(s Shape, data any) (ret *Array, e error) {
 func (t *Array) Format(st fmt.State, r rune) {
 	s := fmt.Sprintf("Shape: %v\nType: %v", t.Shape, t.ElemType())
 	data := "\nData:\n"
-	stride := t.DimAt(-1)
+	stride := t.GetDim(-1)
 	d := t.ToHost()
 	for i := 0; i < t.Len(); i++ {
 		if i > 0 && i%stride == 0 {
 			data += "\n"
-			if i%(stride*t.DimAt(-2)) == 0 {
+			if i%(stride*t.GetDim(-2)) == 0 {
 				data += "\n"
 			}
 		}
@@ -236,7 +302,7 @@ func (r *cudaRunner) DeviceFree(a *Array) {
 }
 
 func (r *cudaRunner) Softmax(a *Array) (*Array, error) {
-	col := a.DimAt(-1)
+	col := a.GetDim(-1)
 	row := a.Len() / col
 	out := C.cuda_malloc(C.size_t(row * col * a.ElemSize()))
 	C.cuda_softmax(out, a.dptr, C.int(row), C.int(col))
@@ -250,19 +316,19 @@ func (r *cudaRunner) Matmul(a, b, bias *Array) (*Array, error) {
 	if a.NumDims() < 2 || b.NumDims() != 2 {
 		return nil, fmt.Errorf("arrays must have at least 2 dimensions")
 	}
-	if a.DimAt(-1) != b.DimAt(-1) {
+	if a.GetDim(-1) != b.GetDim(-1) {
 		return nil, fmt.Errorf("array shapes do not match")
 	}
 	var biasPtr unsafe.Pointer = nil
 	if bias != nil {
 		biasPtr = bias.dptr
-		if bias.Len() != b.DimAt(-2) {
+		if bias.Len() != b.GetDim(-2) {
 			return nil, fmt.Errorf("bias shape does not match")
 		}
 	}
-	column := a.DimAt(-1)
+	column := a.GetDim(-1)
 	row := a.Len() / column
-	oc := b.DimAt(-2)
+	oc := b.GetDim(-2)
 	out := C.cuda_malloc(C.size_t(row * oc * a.ElemSize()))
 	C.cuda_matmul(out, a.dptr, b.dptr, biasPtr, C.int(row), C.int(column), C.int(oc))
 	shape := a.Shape
@@ -282,11 +348,11 @@ func (r cudaRunner) Embedding(embd, ids *Array) (*Array, error) {
 	if embd.NumDims() != 2 {
 		return nil, fmt.Errorf("embedding must be 2D")
 	}
-	col := embd.DimAt(1)
-	row := ids.DimAt(-1)
+	col := embd.GetDim(1)
+	row := ids.GetDim(-1)
 	batch := 1
 	if ids.NumDims() == 2 {
-		batch = ids.DimAt(0)
+		batch = ids.GetDim(0)
 	}
 	out := C.cuda_malloc(C.size_t(batch * row * col * embd.ElemSize()))
 	C.cuda_embedding(out, ids.dptr, embd.dptr, C.int(batch), C.int(row), C.int(col))

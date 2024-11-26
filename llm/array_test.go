@@ -65,16 +65,30 @@ func TestShapeNumDims(t *testing.T) {
 	assert.Equal(t, s.NumDims(), expected)
 }
 
-func TestShapeDimAt(t *testing.T) {
+func TestShapeGetDim(t *testing.T) {
 	s := Shape{2, 3, 4}
-	assert.Equal(t, s.DimAt(0), 2)
-	assert.Equal(t, s.DimAt(1), 3)
-	assert.Equal(t, s.DimAt(2), 4)
-	assert.Equal(t, s.DimAt(-1), 4)
-	assert.Equal(t, s.DimAt(-2), 3)
-	assert.Equal(t, s.DimAt(-3), 2)
-	assert.Panic(t, func() { s.DimAt(3) })
-	assert.Panic(t, func() { s.DimAt(-4) })
+	assert.Equal(t, s.GetDim(0), 2)
+	assert.Equal(t, s.GetDim(1), 3)
+	assert.Equal(t, s.GetDim(2), 4)
+	assert.Equal(t, s.GetDim(-1), 4)
+	assert.Equal(t, s.GetDim(-2), 3)
+	assert.Equal(t, s.GetDim(-3), 2)
+	assert.Panic(t, func() { s.GetDim(3) })
+	assert.Panic(t, func() { s.GetDim(-4) })
+}
+
+func TestShapeSetDim(t *testing.T) {
+	s := Shape{2, 3, 4}
+	s.SetDim(0, 5)
+	s.SetDim(1, 6)
+	s.SetDim(2, 7)
+	assert.Equal(t, s.GetDim(0), 5)
+	assert.Equal(t, s.GetDim(1), 6)
+	assert.Equal(t, s.GetDim(2), 7)
+	s.SetDim(-1, 8)
+	assert.Equal(t, s.GetDim(2), 8)
+	assert.Panic(t, func() { s.SetDim(5, 8) })
+	assert.Panic(t, func() { s.SetDim(-5, 8) })
 }
 
 func TestShapeIsScalar(t *testing.T) {

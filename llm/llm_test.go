@@ -106,7 +106,7 @@ func TestGGUFParser(t *testing.T) {
 func TestGGUFGetConfig(t *testing.T) {
 	m, err := NewModel("test_data/llama3.2-3b.gguf")
 	if err != nil {
-		t.Skip("llama3.2-3b.gguf not found")
+		t.Skip("llama3.2-3b.gguf: ", err)
 	}
 	assert.Equal(t, &Config{"llama", 131072, 28, 128, 24, 8, 3072, 1e-05, 500000}, m.Config)
 	text := "你好，World!"
