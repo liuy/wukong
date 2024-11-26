@@ -1,11 +1,5 @@
 package llm
 
-import (
-	"github.com/liuy/wukong/tensor"
-)
-
-type Tensor = tensor.Tensor
-
 type Config struct {
 	Arch        string  // "llama"
 	ContextLen  uint32  // context length

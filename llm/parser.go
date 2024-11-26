@@ -3,11 +3,7 @@ package llm
 import (
 	"encoding/binary"
 	"fmt"
-
-	"github.com/liuy/wukong/tensor"
 )
-
-type DType = tensor.DType
 
 // GGUFType represents the type of metadata value
 type GGUFType uint32
