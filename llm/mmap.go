@@ -6,6 +6,7 @@ import (
 	"os"
 	"runtime"
 	"syscall"
+	"unsafe"
 )
 
 // mmapReader reads a memory-mapped file.
@@ -123,4 +124,15 @@ func MmapOpen(filename string) (*mmapReader, error) {
 	r := &mmapReader{data, 0}
 	runtime.SetFinalizer(r, (*mmapReader).Close)
 	return r, nil
+}
+
+// PointerAt returns a pointer to the byte at the specified offset.
+func (r *mmapReader) PointerAt(offset int64) (unsafe.Pointer, error) {
+	if r.data == nil {
+		return nil, fmt.Errorf("mmap: reader is closed")
+	}
+	if offset < 0 || int64(len(r.data)) < offset {
+		return nil, fmt.Errorf("mmap: invalid offset %d", offset)
+	}
+	return unsafe.Pointer(&r.data[offset]), nil
 }

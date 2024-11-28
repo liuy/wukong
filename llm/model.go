@@ -15,7 +15,6 @@ type Config struct {
 type Model struct {
 	*Config
 	*Tokenizer
-	*Tensor
 }
 
 func NewModel(path string) (*Model, error) {
@@ -23,5 +22,8 @@ func NewModel(path string) (*Model, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Model{gguf.GetConfig(), gguf.GetTokenizer(), gguf.BuildTensor()}, nil
+	return &Model{
+		Config:    gguf.GetConfig(),
+		Tokenizer: gguf.GetTokenizer(),
+	}, nil
 }

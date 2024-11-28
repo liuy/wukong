@@ -3,6 +3,7 @@ package llm
 import (
 	"fmt"
 	"strings"
+	"unsafe"
 )
 
 type Operator struct {
@@ -71,7 +72,7 @@ func (t *Tensor) Data() any {
 	if t.Array == nil {
 		return nil
 	}
-	return t.Array.ToHost().Interface()
+	return t.Array.ToHost()
 }
 
 // Shape is a syntactic sugar to get the shape of the Tensor's data.
@@ -79,10 +80,18 @@ func (t *Tensor) Shape() Shape {
 	return t.Array.Shape
 }
 
+func MakeTensorFrom(s Shape, p unsafe.Pointer, dt DType) (*Tensor, error) {
+	a, err := MakeArrayFrom(s, p, dt)
+	if err != nil {
+		return nil, err
+	}
+	return &Tensor{Array: a}, nil
+}
+
 // MakeTensor creates a new Tensor from the given Shape and data. For e.g,
 // MakeTensor(Shape{2, 2}, []float32{1, 2, 3, 4}) creates a 2D Tensor of float32.
 func MakeTensor(s Shape, data any) (*Tensor, error) {
-	a, err := MakeArrayFrom(s, data)
+	a, err := MakeArray(s, data)
 	if err != nil {
 		return nil, err
 	}

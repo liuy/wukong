@@ -1,6 +1,7 @@
 package llm
 
 import (
+	"encoding/binary"
 	"io"
 	"os"
 	"testing"
@@ -135,6 +136,127 @@ func BenchmarkGGUFParser(b *testing.B) {
 		assert.NoErr(b, err)
 		gguf.GetTokensMap()
 	}
+}
+
+func TestLoadTensors(t *testing.T) {
+	tmpfile, err := os.CreateTemp("", "tensor_test")
+	assert.NoErr(t, err)
+	defer os.Remove(tmpfile.Name())
+	defer tmpfile.Close()
+
+	f32Data := []float32{1.0, 2.0, 3.0, 4.0}
+	f64Data := []float64{1.0, 2.0, 3.0, 4.0}
+	i8Data := []int8{1, 2, 3, 4}
+	i16Data := []int16{1, 2, 3, 4}
+	i32Data := []int32{1, 2, 3, 4}
+	i64Data := []int64{1, 2, 3, 4}
+
+	f32Offset := uint64(0)
+	f64Offset := f32Offset + uint64(binary.Size(f32Data))
+	i8Offset := f64Offset + uint64(binary.Size(f64Data))
+	i16Offset := i8Offset + uint64(binary.Size(i8Data))
+	i32Offset := i16Offset + uint64(binary.Size(i16Data))
+	i64Offset := i32Offset + uint64(binary.Size(i32Data))
+
+	writeData := func(data interface{}) error {
+		return binary.Write(tmpfile, binary.LittleEndian, data)
+	}
+
+	assert.NoErr(t, writeData(f32Data))
+	assert.NoErr(t, writeData(f64Data))
+	assert.NoErr(t, writeData(i8Data))
+	assert.NoErr(t, writeData(i16Data))
+	assert.NoErr(t, writeData(i32Data))
+	assert.NoErr(t, writeData(i64Data))
+
+	reader, err := MmapOpen(tmpfile.Name())
+	assert.NoErr(t, err)
+	defer reader.Close()
+
+	gguf := &GGUFFile{
+		TensorInfos: map[string]GGUFTensorInfo{
+			"f32_tensor": {
+				Dims:   []int{2, 2},
+				Type:   GGML_TYPE_F32,
+				Offset: f32Offset,
+			},
+			"f64_tensor": {
+				Dims:   []int{2, 2},
+				Type:   GGML_TYPE_F64,
+				Offset: f64Offset,
+			},
+			"i8_tensor": {
+				Dims:   []int{2, 2},
+				Type:   GGML_TYPE_I8,
+				Offset: i8Offset,
+			},
+			"i16_tensor": {
+				Dims:   []int{2, 2},
+				Type:   GGML_TYPE_I16,
+				Offset: i16Offset,
+			},
+			"i32_tensor": {
+				Dims:   []int{2, 2},
+				Type:   GGML_TYPE_I32,
+				Offset: i32Offset,
+			},
+			"i64_tensor": {
+				Dims:   []int{2, 2},
+				Type:   GGML_TYPE_I64,
+				Offset: i64Offset,
+			},
+		},
+	}
+
+	tensors := loadTensors(reader, gguf)
+	assert.NotNil(t, tensors)
+
+	testCases := []struct {
+		name  string
+		shape Shape
+		dtype DType
+		data  any
+	}{
+		{"f32_tensor", Shape{2, 2}, GGML_TYPE_F32, f32Data},
+		{"f64_tensor", Shape{2, 2}, GGML_TYPE_F64, f64Data},
+		{"i8_tensor", Shape{2, 2}, GGML_TYPE_I8, i8Data},
+		{"i16_tensor", Shape{2, 2}, GGML_TYPE_I16, i16Data},
+		{"i32_tensor", Shape{2, 2}, GGML_TYPE_I32, i32Data},
+		{"i64_tensor", Shape{2, 2}, GGML_TYPE_I64, i64Data},
+	}
+
+	for _, tc := range testCases {
+		tensor, ok := tensors[tc.name]
+		assert.True(t, ok)
+		assert.NotNil(t, tensor)
+		assert.Equal(t, tc.shape, tensor.Shape())
+		assert.Equal(t, tc.dtype, tensor.dtype)
+		assert.Equal(t, tc.data, tensor.Data())
+	}
+
+	badGGUF := &GGUFFile{
+		TensorInfos: map[string]GGUFTensorInfo{
+			"bad_tensor": {
+				Dims:   []int{2, 2},
+				Type:   GGML_TYPE_F32,
+				Offset: 999999999, // Invalid offset
+			},
+		},
+	}
+	tensors = loadTensors(reader, badGGUF)
+	assert.Nil(t, tensors)
+
+	badGGUF = &GGUFFile{
+		TensorInfos: map[string]GGUFTensorInfo{
+			"bad_tensor": {
+				Dims:   []int{0}, // Invalid dimension
+				Type:   GGML_TYPE_F32,
+				Offset: 0,
+			},
+		},
+	}
+	tensors = loadTensors(reader, badGGUF)
+	assert.Nil(t, tensors)
 }
 
 func TestMmapReader(t *testing.T) {

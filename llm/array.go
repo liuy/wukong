@@ -55,21 +55,22 @@ const (
 	GGML_TYPE_Q4_0_8_8              // 33
 	GGML_TYPE_TQ1_0                 // 34
 	GGML_TYPE_TQ2_0                 // 35
+	GGML_TYPE_COUNT
 )
 
 const QK_K = 256
 
 // QuantInfo holds information about a quantization type
-type QuantInfo struct {
+type DTypeSize struct {
 	name      string
 	blockSize int
 	typeSize  int
 }
 
-// ggufQuantInfo maps DType to quantization information {name, blockSize, typeSize}
-var ggufQuantInfo = map[DType]QuantInfo{
-	GGML_TYPE_F32:      {"GGML_TYPE_F32", 1, 4},
-	GGML_TYPE_F16:      {"GGML_TYPE_F16", 1, 2},
+// DTypeInfo maps DType to quantization information {name, blockSize, typeSize}
+var DTypeInfo = map[DType]DTypeSize{
+	GGML_TYPE_F32:      {"F32", 1, 4},
+	GGML_TYPE_F16:      {"F16", 1, 2},
 	GGML_TYPE_Q4_0:     {"GGML_TYPE_Q4_0", 32, 2 + 16},
 	GGML_TYPE_Q4_1:     {"GGML_TYPE_Q4_1", 32, 2 + 2 + 16},
 	GGML_TYPE_Q4_2:     {"GGML_TYPE_Q4_2", 32, 2 + 2 + 16},
@@ -92,13 +93,13 @@ var ggufQuantInfo = map[DType]QuantInfo{
 	GGML_TYPE_IQ3_S:    {"GGML_TYPE_IQ3_S", 256, 2 + QK_K/4 + QK_K/8 + QK_K/32 + 4},
 	GGML_TYPE_IQ2_S:    {"GGML_TYPE_IQ2_S", 256, 2 + QK_K/4 + QK_K/16},
 	GGML_TYPE_IQ4_XS:   {"GGML_TYPE_IQ4_XS", 256, 2 + 2 + QK_K/2 + QK_K/64},
-	GGML_TYPE_I8:       {"GGML_TYPE_I8", 1, 1},
-	GGML_TYPE_I16:      {"GGML_TYPE_I16", 1, 2},
-	GGML_TYPE_I32:      {"GGML_TYPE_I32", 1, 4},
-	GGML_TYPE_I64:      {"GGML_TYPE_I64", 1, 8},
-	GGML_TYPE_F64:      {"GGML_TYPE_F64", 1, 8},
+	GGML_TYPE_I8:       {"Int8", 1, 1},
+	GGML_TYPE_I16:      {"Int16", 1, 2},
+	GGML_TYPE_I32:      {"Int32", 1, 4},
+	GGML_TYPE_I64:      {"Int64", 1, 8},
+	GGML_TYPE_F64:      {"F64", 1, 8},
 	GGML_TYPE_IQ1_M:    {"GGML_TYPE_IQ1_M", 256, QK_K/8 + QK_K/16 + QK_K/32},
-	GGML_TYPE_BF16:     {"GGML_TYPE_BF16", 1, 2},
+	GGML_TYPE_BF16:     {"BF16", 1, 2},
 	GGML_TYPE_Q4_0_4_4: {"GGML_TYPE_Q4_0_4_4", 32, 2 + 16},
 	GGML_TYPE_Q4_0_4_8: {"GGML_TYPE_Q4_0_4_8", 32, 2 + 16},
 	GGML_TYPE_Q4_0_8_8: {"GGML_TYPE_Q4_0_8_8", 32, 2 + 16},
@@ -107,7 +108,7 @@ var ggufQuantInfo = map[DType]QuantInfo{
 }
 
 func (t DType) String() string {
-	if info, ok := ggufQuantInfo[t]; ok {
+	if info, ok := DTypeInfo[t]; ok {
 		return info.name
 	}
 	return fmt.Sprintf("GGML_TYPE_UNKNOWN(%d)", t)
@@ -117,7 +118,6 @@ type Shape []int
 
 type Storage struct {
 	dptr  unsafe.Pointer
-	atype reflect.Type // Type of the Array to interact with go
 	dtype DType
 }
 
@@ -125,7 +125,7 @@ type Runner interface {
 	Softmax(a *Array) (*Array, error)
 	Matmul(a, b, bias *Array) (*Array, error)
 	ToDevice(a *Array, src unsafe.Pointer)
-	ToHost(a *Array) reflect.Value
+	ToHost(a *Array) any
 	DeviceFree(a *Array)
 	Embedding(embd, ids *Array) (*Array, error)
 }
@@ -192,11 +192,11 @@ func (s Shape) Format(st fmt.State, r rune) {
 	st.Write([]byte(")"))
 }
 
-func NewArray(s Shape, t reflect.Type) *Array {
+func NewArray(s Shape, d DType) *Array {
 	a := &Array{
 		s,
 		Storage{
-			atype: t,
+			dtype: d,
 		},
 		&cudaRunner{},
 	}
@@ -204,18 +204,54 @@ func NewArray(s Shape, t reflect.Type) *Array {
 	return a
 }
 
-// Creates a new Array from a Shape and a slice of data of any type
-// For e.g, MakeArrayFrom(Shape{2, 3}, []float32{1, 2, 3, 4, 5, 6}) creates a 2D Array of float32
-func MakeArrayFrom(s Shape, data any) (ret *Array, e error) {
+// Creates a new Array from a Shape and bytes of data of DType.
+//
+//	s: shape of the data
+//	p: pointer to the data in the memory
+//	t: DType of the data
+func MakeArrayFrom(s Shape, p unsafe.Pointer, t DType) (*Array, error) {
+	if s.Len() <= 0 {
+		return nil, fmt.Errorf("bad shape: %v", s)
+	}
+	info, ok := DTypeInfo[t]
+	if !ok {
+		return nil, fmt.Errorf("bad dtype: %v", t)
+	}
+	if s.GetDim(-1)%info.blockSize != 0 {
+		return nil, fmt.Errorf("shape %v is not aligned to %d", s, info.blockSize)
+	}
+	a := NewArray(s, t)
+	a.ToDevice(p)
+	return a, nil
+}
+
+func DTypeOf(t reflect.Type) DType {
+	switch t.Kind() {
+	case reflect.Int8:
+		return GGML_TYPE_I8
+	case reflect.Int16:
+		return GGML_TYPE_I16
+	case reflect.Int32:
+		return GGML_TYPE_I32
+	case reflect.Int64:
+		return GGML_TYPE_I64
+	case reflect.Float32:
+		return GGML_TYPE_F32
+	case reflect.Float64:
+		return GGML_TYPE_F64
+	default:
+		panic(fmt.Sprintf("unsupported type %v", t))
+	}
+}
+
+// Creates a new Array from a Shape and a go slice of data of any type
+// For e.g, MakeArray(Shape{2, 3}, []float32{1, 2, 3, 4, 5, 6}) creates a 2D Array of float32
+func MakeArray(s Shape, data any) (ret *Array, e error) {
 	v := reflect.ValueOf(data)
 	if v.Len() != s.Len() {
-		_, file, line, ok := runtime.Caller(1)
-		if !ok {
-			return nil, fmt.Errorf("data length does not match Shape")
-		}
-		return nil, fmt.Errorf("data length does not match Shape (file: %s, line: %d)", file, line)
+		return nil, fmt.Errorf("data length %d does not match shape length %d", v.Len(), s.Len())
 	}
-	ret = NewArray(s, v.Type())
+	ret = NewArray(s, DTypeOf(v.Type().Elem()))
 	ret.ToDevice(unsafe.Pointer(v.Pointer()))
 	return ret, nil
 }
@@ -224,7 +260,7 @@ func (t *Array) Format(st fmt.State, r rune) {
 	s := fmt.Sprintf("Shape: %v\nType: %v", t.Shape, t.ElemType())
 	data := "\nData:\n"
 	stride := t.GetDim(-1)
-	d := t.ToHost()
+	d := reflect.ValueOf(t.ToHost())
 	for i := 0; i < t.Len(); i++ {
 		if i > 0 && i%stride == 0 {
 			data += "\n"
@@ -251,13 +287,37 @@ func CudaSetup()    { C.cuda_init() }
 func CudaTeardown() { C.cuda_fini() }
 
 // Returns the element type of the Array
-func (a *Array) ElemType() reflect.Type { return a.atype.Elem() }
+func (a *Array) ElemType() DType { return a.dtype }
 
 // Returns the element size of the Array in bytes
-func (a *Array) ElemSize() int { return int(a.atype.Elem().Size()) }
+func (a *Array) ElemBlockSize() int {
+	if info, ok := DTypeInfo[a.dtype]; ok {
+		return info.blockSize
+	}
+	panic(fmt.Sprintf("Bad dtype: %d", a.dtype))
+}
+
+func (a *Array) ElemTypeSize() int {
+	if info, ok := DTypeInfo[a.dtype]; ok {
+		return info.typeSize
+	}
+	panic(fmt.Sprintf("Bad dtype: %d", a.dtype))
+}
 
 // Returns the total size of the Array in bytes
-func (a *Array) Size() int { return a.Len() * a.ElemSize() }
+func (a *Array) Size() int {
+	info, ok := DTypeInfo[a.dtype]
+	if !ok {
+		panic(fmt.Sprintf("Bad dtype: %d", a.dtype))
+	}
+
+	s := a.Shape
+	if s.GetDim(-1)%info.blockSize != 0 {
+		panic(fmt.Errorf("Shape %v is not aligned to %d", s, info.blockSize))
+	}
+
+	return a.Len() / info.blockSize * info.typeSize
+}
 
 // Softmax in a row-wise manner
 func (a *Array) Softmax() (*Array, error) { return a.Runner.Softmax(a) }
@@ -269,7 +329,7 @@ func (a *Array) Matmul(b, bias *Array) (*Array, error) { return a.Runner.Matmul(
 func (a *Array) ToDevice(src unsafe.Pointer) { a.Runner.ToDevice(a, src) }
 
 // Copy data from device to host
-func (a *Array) ToHost() reflect.Value { return a.Runner.ToHost(a) }
+func (a *Array) ToHost() any { return a.Runner.ToHost(a) }
 
 // Free device memory
 func (a *Array) DeviceFree() { a.Runner.DeviceFree(a) }
@@ -287,9 +347,23 @@ func (r *cudaRunner) ToDevice(a *Array, src unsafe.Pointer) {
 	C.cuda_to_device(a.dptr, src, C.size_t(a.Size()))
 }
 
-func (r *cudaRunner) ToHost(a *Array) reflect.Value {
-	dst := reflect.MakeSlice(a.atype, a.Len(), a.Len())
-	C.cuda_to_host(unsafe.Pointer(dst.Pointer()), a.dptr, C.size_t(a.Size()))
+func (r *cudaRunner) ToHost(a *Array) any {
+	dst := make([]byte, a.Size())
+	C.cuda_to_host(unsafe.Pointer(&dst[0]), a.dptr, C.size_t(a.Size()))
+	switch a.dtype {
+	case GGML_TYPE_F32:
+		return unsafe.Slice((*float32)(unsafe.Pointer(&dst[0])), a.Size()/4)
+	case GGML_TYPE_F64:
+		return unsafe.Slice((*float64)(unsafe.Pointer(&dst[0])), a.Size()/8)
+	case GGML_TYPE_I8:
+		return unsafe.Slice((*int8)(unsafe.Pointer(&dst[0])), a.Size())
+	case GGML_TYPE_I16:
+		return unsafe.Slice((*int16)(unsafe.Pointer(&dst[0])), a.Size()/2)
+	case GGML_TYPE_I32:
+		return unsafe.Slice((*int32)(unsafe.Pointer(&dst[0])), a.Size()/4)
+	case GGML_TYPE_I64:
+		return unsafe.Slice((*int64)(unsafe.Pointer(&dst[0])), a.Size()/8)
+	}
 	return dst
 }
 
@@ -304,9 +378,9 @@ func (r *cudaRunner) DeviceFree(a *Array) {
 func (r *cudaRunner) Softmax(a *Array) (*Array, error) {
 	col := a.GetDim(-1)
 	row := a.Len() / col
-	out := C.cuda_malloc(C.size_t(row * col * a.ElemSize()))
+	out := C.cuda_malloc(C.size_t(row * col * a.ElemTypeSize() / a.ElemBlockSize()))
 	C.cuda_softmax(out, a.dptr, C.int(row), C.int(col))
-	ret := NewArray(a.Shape, a.atype)
+	ret := NewArray(a.Shape, a.dtype)
 	ret.dptr = out
 	return ret, nil
 }
@@ -329,17 +403,17 @@ func (r *cudaRunner) Matmul(a, b, bias *Array) (*Array, error) {
 	column := a.GetDim(-1)
 	row := a.Len() / column
 	oc := b.GetDim(-2)
-	out := C.cuda_malloc(C.size_t(row * oc * a.ElemSize()))
+	out := C.cuda_malloc(C.size_t(row * oc * a.ElemTypeSize() / a.ElemBlockSize()))
 	C.cuda_matmul(out, a.dptr, b.dptr, biasPtr, C.int(row), C.int(column), C.int(oc))
 	shape := a.Shape
 	shape[len(shape)-1] = oc
-	ret := NewArray(shape, a.atype)
+	ret := NewArray(shape, a.dtype)
 	ret.dptr = out
 	return ret, nil
 }
 
 func (r cudaRunner) Embedding(embd, ids *Array) (*Array, error) {
-	if ids.ElemType() != reflect.TypeOf(int32(0)) {
+	if ids.ElemType() != GGML_TYPE_I32 {
 		return nil, fmt.Errorf("index must be an int32 integer")
 	}
 	if ids.NumDims() > 2 {
@@ -354,9 +428,9 @@ func (r cudaRunner) Embedding(embd, ids *Array) (*Array, error) {
 	if ids.NumDims() == 2 {
 		batch = ids.GetDim(0)
 	}
-	out := C.cuda_malloc(C.size_t(batch * row * col * embd.ElemSize()))
+	out := C.cuda_malloc(C.size_t(batch * row * col * embd.ElemTypeSize() / embd.ElemBlockSize()))
 	C.cuda_embedding(out, ids.dptr, embd.dptr, C.int(batch), C.int(row), C.int(col))
-	ret := NewArray(Shape{batch, row, col}, embd.atype)
+	ret := NewArray(Shape{batch, row, col}, embd.dtype)
 	ret.dptr = out
 	return ret, nil
 }

@@ -35,10 +35,10 @@ func TestArrayElemSize(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		a, err := MakeArrayFrom(tt.shape, tt.data)
+		a, err := MakeArray(tt.shape, tt.data)
 		assert.NoErr(t, err)
 		assert.NotNil(t, a)
-		assert.Equal(t, a.ElemSize(), tt.expected)
+		assert.Equal(t, a.ElemTypeSize()/a.ElemBlockSize(), tt.expected)
 	}
 }
 
@@ -53,7 +53,7 @@ func TestArraySize(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		a, err := MakeArrayFrom(tt.shape, tt.data)
+		a, err := MakeArray(tt.shape, tt.data)
 		assert.NoErr(t, err)
 		assert.Equal(t, a.Size(), tt.expected)
 	}
@@ -108,20 +108,20 @@ func TestArrayFormat(t *testing.T) {
 		{
 			Shape{2, 2, 3},
 			[]int16{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12},
-			"Shape: (2, 2, 3)\nType: int16\nData:\n 1 2 3\n 4 5 6\n\n 7 8 9\n 10 11 12\n",
+			"Shape: (2, 2, 3)\nType: Int16\nData:\n 1 2 3\n 4 5 6\n\n 7 8 9\n 10 11 12\n",
 		},
 		{
 			Shape{2, 3},
 			[]float32{1.1, 2.2, 3.3, 4.4, 5.5, 6.6},
-			"Shape: (2, 3)\nType: float32\nData:\n 1.1 2.2 3.3\n 4.4 5.5 6.6\n",
+			"Shape: (2, 3)\nType: F32\nData:\n 1.1 2.2 3.3\n 4.4 5.5 6.6\n",
 		},
 	}
 
 	for _, tt := range tests {
-		a, err := MakeArrayFrom(tt.shape, tt.data)
+		a, err := MakeArray(tt.shape, tt.data)
 		assert.NoErr(t, err)
 		result := fmt.Sprintf("%v", a)
-		assert.Equal(t, result, tt.expected)
+		assert.Equal(t, tt.expected, result)
 	}
 	// runtime.GC() // test if finalizer is called
 }
@@ -145,7 +145,7 @@ func TestMakeArray(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		_, err := MakeArrayFrom(tt.Shape, tt.data)
+		_, err := MakeArray(tt.Shape, tt.data)
 		assert.Equal(t, err == nil, tt.valid)
 	}
 }
@@ -154,10 +154,12 @@ func TestArrayDeviceFree(t *testing.T) {
 	var text string
 	shape := Shape{2, 3}
 	v := reflect.ValueOf([]float32{1, 2, 3, 4, 5, 6})
-	a := &Array{shape, Storage{atype: v.Type()}, &cudaRunner{}}
+	a := &Array{shape, Storage{
+		dtype: DTypeOf(v.Type().Elem()),
+	}, &cudaRunner{}}
 	a.ToDevice(unsafe.Pointer(v.Pointer()))
 	assert.NotNil(t, a.dptr)
-	assert.Equal(t, []float32{1, 2, 3, 4, 5, 6}, a.ToHost().Interface().([]float32))
+	assert.Equal(t, []float32{1, 2, 3, 4, 5, 6}, a.ToHost().([]float32))
 
 	runtime.SetFinalizer(a, func(a *Array) {
 		a.DeviceFree()
@@ -180,19 +182,19 @@ func TestArraySoftmax(t *testing.T) {
 		{Shape{2, 1, 3}, []float32{3.0, 1.0, 0.2, 1, 1000, 2}, []float32{0.8360188, 0.11314284, 0.05083836, 0.0, 1.0, 0.0}},
 	}
 
-	a, err := MakeArrayFrom(Shape{3}, []float32{1.0, 2.0, 3.0})
+	a, err := MakeArray(Shape{3}, []float32{1.0, 2.0, 3.0})
 	assert.NoErr(t, err)
 	res, err := a.Softmax()
 	assert.NoErr(t, err)
-	assert.SliceNear(t, []float32{0.0900305, 0.2447284, 0.6652409}, res.ToHost().Interface().([]float32), 1e-6)
+	assert.SliceNear(t, []float32{0.0900305, 0.2447284, 0.6652409}, res.ToHost().([]float32), 1e-6)
 
 	for _, tt := range tests {
-		array, err := MakeArrayFrom(tt.shape, tt.input)
+		array, err := MakeArray(tt.shape, tt.input)
 		assert.NoErr(t, err)
 
 		res, err := array.Softmax()
 		assert.NoErr(t, err)
-		assert.SliceNear(t, tt.expected, res.ToHost().Interface().([]float32), 1e-6)
+		assert.SliceNear(t, tt.expected, res.ToHost().([]float32), 1e-6)
 	}
 }
 
@@ -235,13 +237,13 @@ func TestArrayMatmul(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		a, err := MakeArrayFrom(tt.a, tt.aData)
+		a, err := MakeArray(tt.a, tt.aData)
 		assert.NoErr(t, err)
-		b, err := MakeArrayFrom(tt.b, tt.bData)
+		b, err := MakeArray(tt.b, tt.bData)
 		assert.NoErr(t, err)
 		var bias *Array
 		if tt.biasData != nil {
-			bias, err = MakeArrayFrom(tt.bias, tt.biasData)
+			bias, err = MakeArray(tt.bias, tt.biasData)
 			assert.NoErr(t, err)
 		}
 
@@ -250,21 +252,21 @@ func TestArrayMatmul(t *testing.T) {
 		if err != nil {
 			continue
 		}
-		assert.SliceNear(t, tt.expected, result.ToHost().Interface().([]float32), 1e-6)
+		assert.SliceNear(t, tt.expected, result.ToHost().([]float32), 1e-6)
 	}
 }
 
 func TestArrayMatmulSoftmax(t *testing.T) {
-	a, err := MakeArrayFrom(Shape{2, 3}, []float32{1, 2, 3, 4, 5, 6})
+	a, err := MakeArray(Shape{2, 3}, []float32{1, 2, 3, 4, 5, 6})
 	assert.NoErr(t, err)
-	b, err := MakeArrayFrom(Shape{3, 3}, []float32{1, 4, 7, 2, 5, 8, 3, 6, 9})
+	b, err := MakeArray(Shape{3, 3}, []float32{1, 4, 7, 2, 5, 8, 3, 6, 9})
 	assert.NoErr(t, err)
 	c, err := a.Matmul(b, nil)
 	assert.NoErr(t, err)
 	d, err := c.Softmax()
 	assert.NoErr(t, err)
 	expected := []float32{6.1289825e-06, 0.0024726081, 0.9975212, 9.3576195e-14, 3.059022e-07, 0.99999964}
-	assert.SliceNear(t, expected, d.ToHost().Interface().([]float32), 1e-6)
+	assert.SliceNear(t, expected, d.ToHost().([]float32), 1e-6)
 }
 func TestArrayEmbedding(t *testing.T) {
 	tests := []struct {
@@ -306,7 +308,7 @@ func TestArrayEmbedding(t *testing.T) {
 		{
 			embdShape: Shape{2, 4}, idsShape: Shape{2, 3},
 			embdData:    []float32{0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8},
-			idsData:     []int{1, 3, 0, 2, 1, 3},
+			idsData:     []int64{1, 3, 0, 2, 1, 3},
 			expected:    nil,
 			expectError: true,
 		},
@@ -327,9 +329,9 @@ func TestArrayEmbedding(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		embd, err := MakeArrayFrom(tt.embdShape, tt.embdData)
+		embd, err := MakeArray(tt.embdShape, tt.embdData)
 		assert.NoErr(t, err)
-		ids, err := MakeArrayFrom(tt.idsShape, tt.idsData)
+		ids, err := MakeArray(tt.idsShape, tt.idsData)
 		assert.NoErr(t, err)
 
 		result, err := embd.Embedding(ids)
@@ -337,6 +339,6 @@ func TestArrayEmbedding(t *testing.T) {
 		if err != nil {
 			continue
 		}
-		assert.SliceNear(t, tt.expected, result.ToHost().Interface().([]float32), 1e-6)
+		assert.SliceNear(t, tt.expected, result.ToHost().([]float32), 1e-6)
 	}
 }

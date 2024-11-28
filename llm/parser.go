@@ -114,7 +114,6 @@ const GGUF_DEFAULT_ALIGNMENT = 32
 
 // GGUFFile represents a complete GGUF file structure
 type GGUFFile struct {
-	File *mmapReader
 	// The header of the file.
 	Header GGUFHeader
 
@@ -138,6 +137,7 @@ type GGUFFile struct {
 	Offset    int64 // Offset of 'data' from the start of the file.
 	// Size       int64 // Size of 'data' in bytes.
 	// TensorData []byte
+	Tensors map[string]*Tensor
 }
 
 // GGUFParser reads a GGUF file and returns a parsed GGUFFile structure
@@ -146,10 +146,10 @@ func GGUFParser(filename string) (*GGUFFile, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to open file: %w", err)
 	}
+	defer file.Close()
 
 	gguf := &GGUFFile{
 		Alignment: GGUF_DEFAULT_ALIGNMENT,
-		File:      file,
 	}
 
 	if err := binary.Read(file, binary.LittleEndian, &gguf.Header); err != nil {
@@ -188,7 +188,7 @@ func GGUFParser(filename string) (*GGUFFile, error) {
 	}
 
 	gguf.Offset = file.AlignOffset(gguf.Alignment)
-
+	gguf.Tensors = loadTensors(file, gguf)
 	return gguf, nil
 }
 
@@ -517,22 +517,22 @@ func (g *GGUFFile) GetTokenizer() *Tokenizer {
 	return tok
 }
 
-// QuantShape returns the quantized shape of the GGUF tensor
-func (g *GGUFFile) TensorQuantShape(s Shape, t DType) (Shape, error) {
-	qinfo := ggufQuantInfo[t]
-	if s.GetDim(-1)%qinfo.blockSize != 0 {
-		return nil, fmt.Errorf("quantized shape %v is not aligned to %d", s, qinfo.typeSize)
+func loadTensors(file *mmapReader, g *GGUFFile) map[string]*Tensor {
+	tensors := make(map[string]*Tensor, len(g.TensorInfos))
+	for name, info := range g.TensorInfos {
+		// fmt.Printf("name: %s, shape: %v, dtype: %v\n", name, shape, info.Type)
+		p, err := file.PointerAt(int64(info.Offset) + g.Offset)
+		if err != nil {
+			return nil
+		}
+		t, err := MakeTensorFrom(info.Dims, p, info.Type)
+		if err != nil {
+			return nil
+		}
+		tensors[name] = t
 	}
-	s.SetDim(-1, s.GetDim(-1)/qinfo.blockSize*qinfo.typeSize)
-	return s, nil
-}
 
-func (g *GGUFFile) BuildTensor() *Tensor {
-	_, ok := g.TensorInfos["token_embd.weight"]
-	if !ok {
-		return nil
-	}
-	return nil
+	return tensors
 }
 
 func (g *GGUFFile) GetConfig() *Config {
