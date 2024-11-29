@@ -204,14 +204,23 @@ func NewArray(s Shape, d DType) *Array {
 	return a
 }
 
-// Creates a new Array from a Shape and bytes of data of DType.
+// Creates a new Array from a Shape and data of DType. For e.g, create a 2D Array of float32
 //
-//	s: shape of the data
-//	p: pointer to the data in the memory
-//	t: DType of the data
+//	data := []float32{1, 2, 3, 4, 5, 6}
+//	ptr := unsafe.Pointer(&data[0])
+//	MakeArrayFrom(Shape{2, 3}, ptr, GGML_TYPE_F32)
+//
+// Parameters:
+//
+//	s : shape of the data
+//	p : pointer to the data in the memory
+//	t : DType of the data
 func MakeArrayFrom(s Shape, p unsafe.Pointer, t DType) (*Array, error) {
-	if s.Len() <= 0 {
+	if s.Len() <= 0 || s.NumDims() == 0 || s == nil {
 		return nil, fmt.Errorf("bad shape: %v", s)
+	}
+	if p == nil {
+		return nil, fmt.Errorf("bad pointer: %v", p)
 	}
 	info, ok := DTypeInfo[t]
 	if !ok {
@@ -245,8 +254,18 @@ func DTypeOf(t reflect.Type) DType {
 }
 
 // Creates a new Array from a Shape and a go slice of data of any type
-// For e.g, MakeArray(Shape{2, 3}, []float32{1, 2, 3, 4, 5, 6}) creates a 2D Array of float32
+// For e.g,
+//
+//	MakeArray(Shape{2, 3}, []float32{1, 2, 3, 4, 5, 6})
+//
+// creates a 2D Array of float32
 func MakeArray(s Shape, data any) (ret *Array, e error) {
+	if s == nil {
+		return nil, fmt.Errorf("shape is nil")
+	}
+	if data == nil {
+		return nil, fmt.Errorf("data is nil")
+	}
 	v := reflect.ValueOf(data)
 	if v.Len() != s.Len() {
 		return nil, fmt.Errorf("data length %d does not match shape length %d", v.Len(), s.Len())
@@ -352,17 +371,17 @@ func (r *cudaRunner) ToHost(a *Array) any {
 	C.cuda_to_host(unsafe.Pointer(&dst[0]), a.dptr, C.size_t(a.Size()))
 	switch a.dtype {
 	case GGML_TYPE_F32:
-		return unsafe.Slice((*float32)(unsafe.Pointer(&dst[0])), a.Size()/4)
+		return unsafe.Slice((*float32)(unsafe.Pointer(&dst[0])), a.Len())
 	case GGML_TYPE_F64:
-		return unsafe.Slice((*float64)(unsafe.Pointer(&dst[0])), a.Size()/8)
+		return unsafe.Slice((*float64)(unsafe.Pointer(&dst[0])), a.Len())
 	case GGML_TYPE_I8:
-		return unsafe.Slice((*int8)(unsafe.Pointer(&dst[0])), a.Size())
+		return unsafe.Slice((*int8)(unsafe.Pointer(&dst[0])), a.Len())
 	case GGML_TYPE_I16:
-		return unsafe.Slice((*int16)(unsafe.Pointer(&dst[0])), a.Size()/2)
+		return unsafe.Slice((*int16)(unsafe.Pointer(&dst[0])), a.Len())
 	case GGML_TYPE_I32:
-		return unsafe.Slice((*int32)(unsafe.Pointer(&dst[0])), a.Size()/4)
+		return unsafe.Slice((*int32)(unsafe.Pointer(&dst[0])), a.Len())
 	case GGML_TYPE_I64:
-		return unsafe.Slice((*int64)(unsafe.Pointer(&dst[0])), a.Size()/8)
+		return unsafe.Slice((*int64)(unsafe.Pointer(&dst[0])), a.Len())
 	}
 	return dst
 }

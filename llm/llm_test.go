@@ -276,6 +276,14 @@ func TestMmapReader(t *testing.T) {
 		defer reader.Close()
 
 		assert.Equal(t, len(content), reader.Len())
+
+		zeroSizeFile, err := os.CreateTemp("", "mmaptest_zero_size")
+		assert.NoErr(t, err)
+		defer os.Remove(zeroSizeFile.Name())
+		err = zeroSizeFile.Close()
+		assert.NoErr(t, err)
+		_, err = MmapOpen(zeroSizeFile.Name())
+		assert.Error(t, err)
 	})
 
 	t.Run("Read", func(t *testing.T) {
@@ -312,6 +320,24 @@ func TestMmapReader(t *testing.T) {
 		assert.Equal(t, int64(8), aligned)
 	})
 
+	t.Run("PointerAt", func(t *testing.T) {
+		reader, err := MmapOpen(tmpfile.Name())
+		assert.NoErr(t, err)
+		defer reader.Close()
+
+		ptr, err := reader.PointerAt(0)
+		assert.NoErr(t, err)
+		assert.NotNil(t, ptr)
+		b := *(*byte)(ptr)
+		assert.Equal(t, content[0], b)
+
+		ptr, err = reader.PointerAt(7)
+		assert.NoErr(t, err)
+		assert.NotNil(t, ptr)
+		b = *(*byte)(ptr)
+		assert.Equal(t, content[7], b)
+	})
+
 	t.Run("ErrorCases", func(t *testing.T) {
 		// Test reading from closed reader
 		reader, err := MmapOpen(tmpfile.Name())
@@ -325,12 +351,21 @@ func TestMmapReader(t *testing.T) {
 		// Test invalid ReadAt offset
 		reader, err = MmapOpen(tmpfile.Name())
 		assert.NoErr(t, err)
-		defer reader.Close()
 
 		_, err = reader.ReadAt(buf, -1)
 		assert.Error(t, err)
 
 		_, err = reader.ReadAt(buf, int64(len(content)+1))
+		assert.Error(t, err)
+
+		_, err = reader.PointerAt(-1)
+		assert.Error(t, err)
+
+		_, err = reader.PointerAt(int64(len(content) + 1))
+		assert.Error(t, err)
+
+		reader.Close()
+		_, err = reader.PointerAt(0)
 		assert.Error(t, err)
 	})
 

@@ -142,6 +142,8 @@ func TestMakeArray(t *testing.T) {
 		{Shape{4, 2, 2}, RandFloatSlice(16), true},
 		{Shape{2, 3}, RandFloatSlice(6), true},
 		{Shape{2, 2}, []int{1, 2, 3}, false},
+		{Shape{}, nil, false},
+		{Shape{}, []int{1, 2, 3}, false},
 	}
 
 	for _, tt := range tests {
@@ -268,6 +270,7 @@ func TestArrayMatmulSoftmax(t *testing.T) {
 	expected := []float32{6.1289825e-06, 0.0024726081, 0.9975212, 9.3576195e-14, 3.059022e-07, 0.99999964}
 	assert.SliceNear(t, expected, d.ToHost().([]float32), 1e-6)
 }
+
 func TestArrayEmbedding(t *testing.T) {
 	tests := []struct {
 		embdShape, idsShape Shape
@@ -340,5 +343,85 @@ func TestArrayEmbedding(t *testing.T) {
 			continue
 		}
 		assert.SliceNear(t, tt.expected, result.ToHost().([]float32), 1e-6)
+	}
+}
+
+func TestMakeArrayFrom(t *testing.T) {
+	tests := []struct {
+		name        string
+		shape       Shape
+		data        []float32
+		dtype       DType
+		expectError bool
+	}{
+		{
+			name:        "Valid float32 array",
+			shape:       Shape{2, 3},
+			data:        []float32{1, 2, 3, 4, 5, 6},
+			dtype:       GGML_TYPE_F32,
+			expectError: false,
+		},
+		{
+			name:        "Empty shape",
+			shape:       Shape{},
+			data:        []float32{1},
+			dtype:       GGML_TYPE_F32,
+			expectError: true,
+		},
+		{
+			name:        "Nil shape",
+			shape:       nil,
+			data:        []float32{1},
+			dtype:       GGML_TYPE_F32,
+			expectError: true,
+		},
+		{
+			name:        "Nil data",
+			shape:       Shape{2, 3},
+			data:        nil,
+			dtype:       GGML_TYPE_F32,
+			expectError: true,
+		},
+		{
+			name:        "Zeroed shape",
+			shape:       Shape{0, 3},
+			data:        []float32{1, 2, 3},
+			dtype:       GGML_TYPE_F32,
+			expectError: true,
+		},
+		{
+			name:        "Invalid dtype",
+			shape:       Shape{2, 3},
+			data:        []float32{1, 2, 3, 4, 5, 6},
+			dtype:       DType(9999), // Invalid dtype
+			expectError: true,
+		},
+		{
+			name:        "Misaligned shape for Q8_0",
+			shape:       Shape{2, 12},
+			data:        []float32{1, 2, 3, 4, 5, 6},
+			dtype:       GGML_TYPE_Q8_0,
+			expectError: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var ptr unsafe.Pointer
+			if tt.data != nil {
+				ptr = unsafe.Pointer(&tt.data[0])
+			}
+			arr, err := MakeArrayFrom(tt.shape, ptr, tt.dtype)
+
+			if tt.expectError {
+				assert.Error(t, err)
+				return
+			}
+
+			assert.NoErr(t, err)
+			assert.NotNil(t, arr)
+			assert.Equal(t, arr.Shape, tt.shape)
+			assert.Equal(t, arr.dtype, tt.dtype)
+		})
 	}
 }
