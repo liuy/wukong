@@ -120,6 +120,19 @@ func (t *Tensor) Embedding(ids *Tensor) *Tensor {
 	return ret
 }
 
+func (t *Tensor) Rmsnorm(x *Tensor, eps float32) *Tensor {
+	ret := &Tensor{}
+	ret.operands = []*Tensor{t, x}
+	ret.operator = &Operator{"Rmsnorm", func(arrs ...*Array) (*Array, error) {
+		a, err := arrs[0].Rmsnorm(arrs[1], eps)
+		if err != nil {
+			return nil, err
+		}
+		return a, nil
+	}}
+	return ret
+}
+
 func drawTensor(t *Tensor) string {
 	var sb strings.Builder
 	drawRecursive(t, &sb, "", true, true)

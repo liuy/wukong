@@ -287,7 +287,7 @@ TEST(Cuda, cuda_rmsnorm)
     cuda_to_device(d_inp, inp, batch * row * col * sizeof(float));
     cuda_to_device(d_weight, weight, col * sizeof(float));
 
-    cuda_rmsnorm(d_out, d_inp, d_weight, batch, row, col);
+    cuda_rmsnorm(d_out, d_inp, d_weight, batch * row, col, 1e-5);
     cuda_to_host(out, d_out, batch * row * col * sizeof(float));
 
     assert_array_eq(res, out, batch * row * col);

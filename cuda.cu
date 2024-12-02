@@ -293,7 +293,7 @@ __global__ void add_bias_kernel(float* out, const float* bias, int T, int OC)
 }
 
 __global__ void rmsnorm_kernel(float* __restrict__ out, const float* __restrict__ inp,
-                              const float* __restrict__ weight, int N, int C)
+                              const float* __restrict__ weight, int N, int C, float eps)
 {
     namespace cg = cooperative_groups;
     cg::thread_block block = cg::this_thread_block();
@@ -334,7 +334,7 @@ __global__ void rmsnorm_kernel(float* __restrict__ out, const float* __restrict_
     float block_sum2 = cg::reduce(warp, warp_sum2, cg::plus<float>{});
 
     block_sum2 /= C; // mean(x**2)
-    float s = rsqrtf(block_sum2 + 1e-5f); // 1 / sqrt(mean(x**2) + eps)
+    float s = rsqrtf(block_sum2 + eps); // 1 / sqrt(mean(x**2) + eps)
 
     // Apply normalization and scaling
     float* o = out + idx * C;
@@ -694,11 +694,10 @@ void cuda_gqa_attention(void *out, const void *inp, int batch, int row, int qNH,
 }
 
 // Root Mean Square Layer Normalization: x / sqrt(mean(x^2) + eps) * weight
-void cuda_rmsnorm(void* out, const void* inp, const void* weight, int batch, int row, int col)
+void cuda_rmsnorm(void* out, const void* inp, const void* weight, int N, int col, float eps)
 {
     const int block_size = 256;
-    const int N = batch * row;
-    rmsnorm_kernel<<<N, block_size>>>((floatX *)out, (const floatX *)inp, (const floatX *)weight, N, col);
+    rmsnorm_kernel<<<N, block_size>>>((floatX *)out, (const floatX *)inp, (const floatX *)weight, N, col, eps);
     cuda_check(cudaGetLastError());
 }
 

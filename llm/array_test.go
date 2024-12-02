@@ -425,3 +425,50 @@ func TestMakeArrayFrom(t *testing.T) {
 		})
 	}
 }
+
+func TestArrayRmsnorm(t *testing.T) {
+	tests := []struct {
+		x        []float32
+		w        []float32
+		xShape   Shape
+		wShape   Shape
+		eps      float32
+		wantErr  bool
+		expected []float32
+	}{
+		{
+			x:        []float32{1.0, 2.0, 3.0, 4.0, 5.0, 6.0},
+			w:        []float32{0.5, 0.5, 0.5},
+			xShape:   Shape{2, 3},
+			wShape:   Shape{3},
+			eps:      1e-6,
+			wantErr:  false,
+			expected: []float32{0.231455, 0.462910, 0.694365, 0.394771, 0.493463, 0.592156},
+		},
+		{
+			x:       []float32{1.0, 2.0, 3.0, 4.0},
+			w:       []float32{0.5, 0.5, 0.5},
+			xShape:  Shape{2, 2},
+			wShape:  Shape{3},
+			eps:     1e-6,
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		x, err := MakeArray(tt.xShape, tt.x)
+		assert.NoErr(t, err)
+
+		w, err := MakeArray(tt.wShape, tt.w)
+		assert.NoErr(t, err)
+
+		result, err := w.Rmsnorm(x, tt.eps)
+		if tt.wantErr {
+			assert.Error(t, err)
+			return
+		}
+		assert.NoErr(t, err)
+		assert.Equal(t, x.Shape, result.Shape)
+		assert.SliceNear(t, tt.expected, result.ToHost().([]float32), 1e-6)
+	}
+}

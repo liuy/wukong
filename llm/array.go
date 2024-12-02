@@ -128,6 +128,7 @@ type Runner interface {
 	ToHost(a *Array) any
 	DeviceFree(a *Array)
 	Embedding(embd, ids *Array) (*Array, error)
+	Rmsnorm(x, w *Array, eps float32) (*Array, error)
 }
 
 // Array is a multi-dimensional array of any type in a row-major order. It is represented by a Shape in the
@@ -356,6 +357,8 @@ func (a *Array) DeviceFree() { a.Runner.DeviceFree(a) }
 // Embedding returns the embeddings of the given idsss
 func (a *Array) Embedding(ids *Array) (*Array, error) { return a.Runner.Embedding(a, ids) }
 
+func (a *Array) Rmsnorm(x *Array, eps float32) (*Array, error) { return a.Runner.Rmsnorm(a, x, eps) }
+
 // Run array operations on the CUDA device
 type cudaRunner struct{}
 
@@ -382,8 +385,9 @@ func (r *cudaRunner) ToHost(a *Array) any {
 		return unsafe.Slice((*int32)(unsafe.Pointer(&dst[0])), a.Len())
 	case GGML_TYPE_I64:
 		return unsafe.Slice((*int64)(unsafe.Pointer(&dst[0])), a.Len())
+	default:
+		panic(fmt.Sprintf("unsupported dtype %v", a.dtype))
 	}
-	return dst
 }
 
 func (r *cudaRunner) DeviceFree(a *Array) {
@@ -431,7 +435,7 @@ func (r *cudaRunner) Matmul(a, b, bias *Array) (*Array, error) {
 	return ret, nil
 }
 
-func (r cudaRunner) Embedding(embd, ids *Array) (*Array, error) {
+func (r *cudaRunner) Embedding(embd, ids *Array) (*Array, error) {
 	if ids.ElemType() != GGML_TYPE_I32 {
 		return nil, fmt.Errorf("index must be an int32 integer")
 	}
@@ -450,6 +454,20 @@ func (r cudaRunner) Embedding(embd, ids *Array) (*Array, error) {
 	out := C.cuda_malloc(C.size_t(batch * row * col * embd.ElemTypeSize() / embd.ElemBlockSize()))
 	C.cuda_embedding(out, ids.dptr, embd.dptr, C.int(batch), C.int(row), C.int(col))
 	ret := NewArray(Shape{batch, row, col}, embd.dtype)
+	ret.dptr = out
+	return ret, nil
+}
+
+func (r *cudaRunner) Rmsnorm(a, x *Array, eps float32) (*Array, error) {
+	if x.GetDim(-1) != a.GetDim(-1) {
+		return nil, fmt.Errorf("weight shape does not match")
+	}
+	ne := x.Len()
+	col := x.GetDim(-1)
+	N := ne / col
+	out := C.cuda_malloc(C.size_t(ne * x.ElemTypeSize() / x.ElemBlockSize()))
+	C.cuda_rmsnorm(out, x.dptr, a.dptr, C.int(N), C.int(col), C.float(eps))
+	ret := NewArray(x.Shape, x.dtype)
 	ret.dptr = out
 	return ret, nil
 }

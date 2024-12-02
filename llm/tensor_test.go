@@ -125,3 +125,16 @@ func TestTensorEmbedding(t *testing.T) {
 	assert.NoErr(t, err)
 	assert.Equal(t, []int32{5, 6, 7, 8, 9, 10, 11, 12, 1, 2, 3, 4}, res.Data())
 }
+
+func TestTensorRmsnorm(t *testing.T) {
+	x, err := MakeTensor(Shape{3, 2}, []float32{1, 2, 3, 4, 5, 6})
+	assert.NoErr(t, err)
+	assert.NotNil(t, x)
+	n, err := MakeTensor(Shape{2}, []float32{0.5, 0.6})
+	assert.NoErr(t, err)
+	assert.NotNil(t, n)
+	res := n.Rmsnorm(x, 1e-5)
+	err = res.Forward()
+	assert.NoErr(t, err)
+	assert.SliceNear(t, []float32{0.31622714, 0.75894517, 0.4242639, 0.6788223, 0.4526786, 0.6518574}, res.Data().([]float32), 1e-6)
+}
