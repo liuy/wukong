@@ -516,6 +516,25 @@ void cuda_matmul_cublaslt(void *out, const void *inp, const void *weight, const 
     cublas_check(cublasLtMatrixLayoutDestroy(bias_layout));
 }
 
+__global__ void cat_kernel(floatX *out, const floatX *a, const floatX *b, int arow, int brow, int col)
+{
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    int total_rows = arow + brow;
+    int total_elements = total_rows * col;
+
+    if (idx < total_elements) {
+        int row = idx / col;
+        int col_idx = idx % col;
+
+        if (row < arow) {
+            out[idx] = a[row * col + col_idx];
+        } else {
+            row -= arow;
+            out[idx] = b[row * col + col_idx];
+        }
+    }
+}
+
 extern "C" {
 void cuda_init(void)
 {
@@ -793,6 +812,25 @@ void cuda_embedding(void* out, const void *inp, const void *embd, int batch, int
     const int N = batch * row * col;
     const int grid_size = CEIL_DIV(N, (block_size * x128::size));
     get_embeddings_kernel<<<grid_size, block_size>>>((floatX *)out, (const int *)inp, (const floatX *)embd, batch, row, col);
+    cuda_check(cudaGetLastError());
+}
+
+/*
+ * Concatenate the input tensors along the first dimension
+ *
+ * @param out: output matrix(arow + brow, col)
+ * @param a: input matrix(arow, col)
+ * @param b: input matrix(brow, col)
+ * @param arow: row size of a
+ * @param brow: row size of b
+ * @param col: column size
+ */
+void cuda_cat(void *out, const void *a, const void *b, int arow, int brow, int col)
+{
+    int block_size = 256;
+    int total_threads = (arow + brow) * col;
+    int num_blocks = CEIL_DIV(total_threads, block_size);
+    cat_kernel<<<num_blocks, block_size>>>((floatX *)out, (const floatX *)a, (const floatX *)b, arow, brow, col);
     cuda_check(cudaGetLastError());
 }
 

@@ -129,6 +129,7 @@ type Runner interface {
 	DeviceFree(a *Array)
 	Embedding(embd, ids *Array) (*Array, error)
 	Rmsnorm(x, w *Array, eps float32) (*Array, error)
+	Cat(a, b *Array) (*Array, error)
 }
 
 // Array is a multi-dimensional array of any type in a row-major order. It is represented by a Shape in the
@@ -357,7 +358,11 @@ func (a *Array) DeviceFree() { a.Runner.DeviceFree(a) }
 // Embedding returns the embeddings of the given idsss
 func (a *Array) Embedding(ids *Array) (*Array, error) { return a.Runner.Embedding(a, ids) }
 
+// Rmsnorm returns the root mean square normalization of the given array
 func (a *Array) Rmsnorm(x *Array, eps float32) (*Array, error) { return a.Runner.Rmsnorm(a, x, eps) }
+
+// Cat returns the concatenation of the given arrays along the first dimension
+func (a *Array) Cat(b *Array) (*Array, error) { return a.Runner.Cat(a, b) }
 
 // Run array operations on the CUDA device
 type cudaRunner struct{}
@@ -468,6 +473,28 @@ func (r *cudaRunner) Rmsnorm(a, x *Array, eps float32) (*Array, error) {
 	out := C.cuda_malloc(C.size_t(ne * x.ElemTypeSize() / x.ElemBlockSize()))
 	C.cuda_rmsnorm(out, x.dptr, a.dptr, C.int(N), C.int(col), C.float(eps))
 	ret := NewArray(x.Shape, x.dtype)
+	ret.dptr = out
+	return ret, nil
+}
+
+func (r *cudaRunner) Cat(a, b *Array) (*Array, error) {
+	if a.dtype != b.dtype {
+		return nil, fmt.Errorf("arrays must have the same dtype")
+	}
+	if a.NumDims() != 2 || b.NumDims() != 2 {
+		return nil, fmt.Errorf("arrays must have 2 dimensions")
+	}
+	if a.GetDim(-1) != b.GetDim(-1) {
+		return nil, fmt.Errorf("array shapes do not match")
+	}
+	col := a.GetDim(-1)
+	arow := a.GetDim(0)
+	brow := b.GetDim(0)
+	out := C.cuda_malloc(C.size_t((arow + brow) * col * a.ElemTypeSize() / a.ElemBlockSize()))
+	C.cuda_cat(out, a.dptr, b.dptr, C.int(arow), C.int(brow), C.int(col))
+	shape := a.Shape
+	shape[0] = arow + brow
+	ret := NewArray(shape, a.dtype)
 	ret.dptr = out
 	return ret, nil
 }

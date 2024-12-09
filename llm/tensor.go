@@ -89,7 +89,10 @@ func MakeTensorFrom(s Shape, p unsafe.Pointer, dt DType) (*Tensor, error) {
 }
 
 // MakeTensor creates a new Tensor from the given Shape and data. For e.g,
-// MakeTensor(Shape{2, 2}, []float32{1, 2, 3, 4}) creates a 2D Tensor of float32.
+//
+//	MakeTensor(Shape{2, 2}, []float32{1, 2, 3, 4})
+//
+// creates a 2D Tensor of float32.
 func MakeTensor(s Shape, data any) (*Tensor, error) {
 	a, err := MakeArray(s, data)
 	if err != nil {
@@ -173,4 +176,30 @@ func drawRecursive(t *Tensor, sb *strings.Builder, prefix string, isLast bool, i
 			drawRecursive(operand, sb, childPrefix, isLastChild, false)
 		}
 	}
+}
+
+// CatTensors concatenates the given tensors along the first axis. Device memory is freed for the input tensors.
+func CatTensors(tensors ...*Tensor) (*Tensor, error) {
+	if len(tensors) == 0 {
+		return nil, fmt.Errorf("no tensors to concatenate")
+	}
+
+	// if any of the tensors is nil, return an error
+	for i, t := range tensors {
+		if t == nil {
+			return nil, fmt.Errorf("tensor at position %d is nil", i)
+		}
+	}
+
+	a := tensors[0].Array
+	for i := 1; i < len(tensors); i++ {
+		b, err := a.Cat(tensors[i].Array)
+		if err != nil {
+			return nil, err
+		}
+		a.DeviceFree()
+		tensors[i].Array.DeviceFree()
+		a = b
+	}
+	return &Tensor{Array: a}, nil
 }

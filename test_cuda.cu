@@ -518,3 +518,35 @@ TEST(Cuda, cuda_embedding) {
     cudaFree(d_embd);
     cudaFree(d_out);
 }
+TEST(Cuda, cuda_cat) {
+    int arow = 2;
+    int brow = 1;
+    int col = 3;
+
+    float a[arow * col] = {1.0f, 2.0f, 3.0f,
+                           4.0f, 5.0f, 6.0f};
+    float b[brow * col] = {7.0f, 8.0f, 9.0f};
+    float out[(arow + brow) * col] = {0};
+
+    float expected[(arow + brow) * col] = {
+        1.0f, 2.0f, 3.0f,
+        4.0f, 5.0f, 6.0f,
+        7.0f, 8.0f, 9.0f,
+    };
+
+    void *d_out = cuda_malloc((arow + brow) * col * sizeof(float));
+    void *d_a = cuda_malloc(arow * col * sizeof(float));
+    void *d_b = cuda_malloc(brow * col * sizeof(float));
+
+    cuda_to_device(d_a, a, arow * col * sizeof(float));
+    cuda_to_device(d_b, b, brow * col * sizeof(float));
+
+    cuda_cat(d_out, d_a, d_b, arow, brow, col);
+    cuda_to_host(out, d_out, (arow + brow) * col * sizeof(float));
+
+    assert_array_eq(out, expected, (arow + brow) * col);
+
+    cuda_free(d_out);
+    cuda_free(d_a);
+    cuda_free(d_b);
+}

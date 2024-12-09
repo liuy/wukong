@@ -472,3 +472,57 @@ func TestArrayRmsnorm(t *testing.T) {
 		assert.SliceNear(t, tt.expected, result.ToHost().([]float32), 1e-6)
 	}
 }
+func TestArrayCat(t *testing.T) {
+	tests := []struct {
+		aShape, bShape Shape
+		aData, bData   []float32
+		expectedShape  Shape
+		expectedData   []float32
+		expectError    bool
+	}{
+		{
+			aShape: Shape{2, 3}, bShape: Shape{2, 3},
+			aData: []float32{1, 2, 3, 4, 5, 6}, bData: []float32{7, 8, 9, 10, 11, 12},
+			expectedShape: Shape{4, 3},
+			expectedData:  []float32{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12},
+			expectError:   false,
+		},
+		{
+			aShape: Shape{2, 3}, bShape: Shape{1, 3},
+			aData: []float32{1, 2, 3, 4, 5, 6}, bData: []float32{7, 8, 9},
+			expectedShape: Shape{3, 3},
+			expectedData:  []float32{1, 2, 3, 4, 5, 6, 7, 8, 9},
+			expectError:   false,
+		},
+		{
+			aShape: Shape{2, 3}, bShape: Shape{2, 2},
+			aData: []float32{1, 2, 3, 4, 5, 6}, bData: []float32{7, 8, 9, 10},
+			expectedShape: nil,
+			expectedData:  nil,
+			expectError:   true,
+		},
+	}
+
+	for _, tt := range tests {
+		a, err := MakeArray(tt.aShape, tt.aData)
+		assert.NoErr(t, err)
+		b, err := MakeArray(tt.bShape, tt.bData)
+		assert.NoErr(t, err)
+
+		result, err := a.Cat(b)
+		assert.Equal(t, tt.expectError, err != nil)
+		if err != nil {
+			continue
+		}
+
+		assert.Equal(t, tt.expectedShape, result.Shape)
+		assert.Equal(t, tt.expectedData, result.ToHost().([]float32))
+	}
+	// Test different data types
+	a, err := MakeArray(Shape{3, 2}, []int32{1, 2, 3, 4, 5, 6})
+	assert.NoErr(t, err)
+	b, err := MakeArray(Shape{2, 3}, []float32{7, 8, 9, 10, 11, 12})
+	assert.NoErr(t, err)
+	_, err = a.Cat(b)
+	assert.Error(t, err)
+}
