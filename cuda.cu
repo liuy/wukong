@@ -360,7 +360,7 @@ __global__ void swiglu_kernel(floatX* out, const floatX* inp, int B, int T, int 
     }
 }
 
-__global__ void rope_kernel(floatX *out, const floatX *inp, const floatX *freqs_cis, int B, int T, int NH, int HS)
+__global__ void rope_kernel(floatX *out, const floatX *inp, const floatX *raw_freqs, int B, int T, int NH, int HS)
 {
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
     int HS_half = HS / 2;
@@ -379,52 +379,19 @@ __global__ void rope_kernel(floatX *out, const floatX *inp, const floatX *freqs_
     int idx_bt = b * (T * 3 * NH * HS) + t * (3 * NH * HS);
     int idx_bth = idx_bt + qkv * (NH * HS) + h * HS;
     int idxi = idx_bth + 2 * d; // index in the input
-    // fetch the freqs_cis
-    int freqs_idx = t * HS + 2 * d;
-    float freqs_cos = freqs_cis[freqs_idx];
-    float freqs_sin = freqs_cis[freqs_idx + 1];
+
+    // fetch and compute frequency
+    float freq = raw_freqs[d];
+    float angle = t * freq;
+    float freqs_cos = cosf(angle);
+    float freqs_sin = sinf(angle);
+
     // fetch the input
     float x_real = inp[idxi];
     float x_imag = inp[idxi + 1];
     // apply the rotation
     out[idxi] = x_real * freqs_cos - x_imag * freqs_sin;
     out[idxi + 1] = x_real * freqs_sin + x_imag * freqs_cos;
-}
-
-__global__ void cuda_get_freqs_cis_kernel(floatX *freqs_cis, int HS, int row, float theta, int use_scaled) {
-    int idx = blockIdx.x * blockDim.x + threadIdx.x;
-    int HS_half = HS / 2;
-    if (idx >= HS_half * row) return;
-
-    int i = idx / row;
-    int t = idx % row;
-
-    // calculate the frequency for the (i, i+1)th dimension
-    float freq = 1.0f / powf(theta, (float)(2 * i) / HS);
-    if (use_scaled) {
-        const int scale_factor = 8;
-        const int low_freq_factor = 1;
-        const int high_freq_factor = 4;
-        const int old_context_len = 8192;  // original llama3 length
-        const float low_freq_wavelen = (float)old_context_len / low_freq_factor;
-        const float high_freq_wavelen = (float)old_context_len / high_freq_factor;
-        float wavelen = 2.0f * M_PI / freq;
-        if (wavelen < high_freq_wavelen) {
-            // skip; keep freq as is
-        } else if (wavelen > low_freq_wavelen) {
-            // scale down by scale_factor
-            freq /= scale_factor;
-        } else {
-            // smooth transition between scaled and unscaled
-            float smooth = ((float)old_context_len / wavelen - low_freq_factor) / (high_freq_factor - low_freq_factor);
-            freq = (1.0f - smooth) * freq / scale_factor + smooth * freq;
-        }
-    }
-
-    // calculate the angle and store the cos/sin
-    float angle = (float)t * freq;
-    freqs_cis[t * HS + 2 * i] = cosf(angle);     // real part
-    freqs_cis[t * HS + 2 * i + 1] = sinf(angle); // imaginary part
 }
 
 __global__ void get_embeddings_kernel(floatX* out, const int* inp, const floatX* wte, int B, int T, int C)
@@ -774,24 +741,14 @@ void cuda_mqa_attention(void *out, const void *inp, int batch, int row, int qNH,
  * @param NH: number of heads
  * @param HS: head size
  */
-void cuda_rope(void *out, const void *inp, const void *freqs_cis, int batch, int row, int NH, int HS)
+void cuda_rope(void *out, const void *inp, const void *raw_freqs, int batch, int row, int NH, int HS)
 {
     // we are going to launch exactly one thread per element of the output,
     // so this single kernel launch will do RoPE for both q and k, and the threads for v will be a no-op
     int block_size = 256;
     int total_threads = batch * row * 3 * NH * HS / 2;
     int num_blocks = CEIL_DIV(total_threads, block_size);
-    rope_kernel<<<num_blocks, block_size>>>((floatX *)out, (const floatX *)inp, (const floatX *)freqs_cis, batch, row, NH, HS);
-    cuda_check(cudaGetLastError());
-}
-
-// Get the frequencies for the RoPE
-void cuda_get_freqs_cis(void *freqs_cis, int HS, int row, float theta, int use_scaled)
-{
-    int total_threads = (HS / 2) * row;
-    int block_size = 256;
-    int num_blocks = CEIL_DIV(total_threads, block_size);
-    cuda_get_freqs_cis_kernel<<<num_blocks, block_size>>>((floatX *)freqs_cis, HS, row, theta, use_scaled);
+    rope_kernel<<<num_blocks, block_size>>>((floatX *)out, (const floatX *)inp, (const floatX *)raw_freqs, batch, row, NH, HS);
     cuda_check(cudaGetLastError());
 }
 
