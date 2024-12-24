@@ -2,6 +2,7 @@ package llm
 
 import (
 	"fmt"
+	"math"
 	"reflect"
 	"runtime"
 	"testing"
@@ -525,4 +526,48 @@ func TestArrayCat(t *testing.T) {
 	assert.NoErr(t, err)
 	_, err = a.Cat(b)
 	assert.Error(t, err)
+}
+
+func TestArrayDivInPlace(t *testing.T) {
+	tests := []struct {
+		aShape, bShape Shape
+		aData, bData   []float32
+		expectedData   []float32
+		expectError    bool
+	}{
+		{
+			aShape: Shape{2, 3}, bShape: Shape{2, 3},
+			aData: []float32{2, 4, 6, 8, 10, 12}, bData: []float32{1, 2, 3, 4, 5, 6},
+			expectedData: []float32{2, 2, 2, 2, 2, 2},
+			expectError:  false,
+		},
+		{
+			aShape: Shape{2, 3}, bShape: Shape{2, 3},
+			aData:        []float32{2, 4, 6, 8, 10, -12},
+			bData:        []float32{1, 0, 3, 4, float32(math.Inf(1)), 0},
+			expectedData: []float32{2, float32(math.Inf(1)), 2, 2, 0, float32(math.Inf(-1))},
+			expectError:  false,
+		},
+		{
+			aShape: Shape{2, 3}, bShape: Shape{2, 2},
+			aData: []float32{2, 4, 6, 8, 10, 12}, bData: []float32{1, 2, 3, 4},
+			expectedData: nil,
+			expectError:  true,
+		},
+	}
+
+	for _, tt := range tests {
+		a, err := MakeArray(tt.aShape, tt.aData)
+		assert.NoErr(t, err)
+		b, err := MakeArray(tt.bShape, tt.bData)
+		assert.NoErr(t, err)
+
+		err = a.DivInPlace(b)
+		assert.Equal(t, tt.expectError, err != nil)
+		if err != nil {
+			continue
+		}
+
+		assert.Equal(t, tt.expectedData, a.ToHost().([]float32))
+	}
 }

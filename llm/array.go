@@ -130,6 +130,7 @@ type Runner interface {
 	Embedding(embd, ids *Array) (*Array, error)
 	Rmsnorm(x, w *Array, eps float32) (*Array, error)
 	Cat(a, b *Array) (*Array, error)
+	DivInPlace(a, b *Array) error
 }
 
 // Array is a multi-dimensional array of any type in a row-major order. It is represented by a Shape in the
@@ -364,6 +365,9 @@ func (a *Array) Rmsnorm(x *Array, eps float32) (*Array, error) { return a.Runner
 // Cat returns the concatenation of the given arrays along the first dimension
 func (a *Array) Cat(b *Array) (*Array, error) { return a.Runner.Cat(a, b) }
 
+// DivInPlace divides the array a by b in place
+func (a *Array) DivInPlace(b *Array) error { return a.Runner.DivInPlace(a, b) }
+
 // Run array operations on the CUDA device
 type cudaRunner struct{}
 
@@ -497,4 +501,31 @@ func (r *cudaRunner) Cat(a, b *Array) (*Array, error) {
 	ret := NewArray(shape, a.dtype)
 	ret.dptr = out
 	return ret, nil
+}
+
+func slicesEqual(slice1, slice2 []int) bool {
+	if len(slice1) != len(slice2) {
+		return false
+	}
+
+	for i := range slice1 {
+		if slice1[i] != slice2[i] {
+			return false
+		}
+	}
+
+	return true
+}
+
+func (r *cudaRunner) DivInPlace(a, b *Array) error {
+	if a.dtype != b.dtype {
+		return fmt.Errorf("arrays must have the same dtype")
+	}
+	if !slicesEqual(a.Shape, b.Shape) {
+		return fmt.Errorf("array shapes do not match")
+	}
+	col := a.GetDim(-1)
+	row := a.GetDim(0)
+	C.cuda_div(a.dptr, a.dptr, b.dptr, C.int(row), C.int(col))
+	return nil
 }
