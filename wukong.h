@@ -141,7 +141,7 @@ static inline void _printm(const char *name, float* matrix, int batch, int row, 
         for (int r = 0; r < row; ++r) {
             for (int c = 0; c < col; ++c) {
                 int index = b * row * col + r * col + c;
-                printf("%f ", matrix[index]);
+                printf("%e ", matrix[index]);
             }
             printf("\n");
         }
