@@ -575,3 +575,36 @@ TEST(Cuda, cuda_cat) {
     cuda_free(d_a);
     cuda_free(d_b);
 }
+
+TEST(Cuda, cuda_div)
+{
+    int row = 2;
+    int col = 3;
+
+    float a[row * col] = {6.0f, 12.0f, 18.0f,
+                          24.0f, 30.0f, 36.0f};
+    float b[row * col] = {2.0f, 3.0f, 6.0f,
+                          8.0f, 5.0f, 9.0f};
+    float out[row * col] = {0};
+
+    float expected[row * col] = {
+        3.0f, 4.0f, 3.0f,
+        3.0f, 6.0f, 4.0f,
+    };
+
+    void *d_out = cuda_malloc(row * col * sizeof(float));
+    void *d_a = cuda_malloc(row * col * sizeof(float));
+    void *d_b = cuda_malloc(row * col * sizeof(float));
+
+    cuda_to_device(d_a, a, row * col * sizeof(float));
+    cuda_to_device(d_b, b, row * col * sizeof(float));
+
+    cuda_div(d_out, d_a, d_b, row, col);
+    cuda_to_host(out, d_out, row * col * sizeof(float));
+
+    assert_array_eq(out, expected, row * col);
+
+    cuda_free(d_out);
+    cuda_free(d_a);
+    cuda_free(d_b);
+}

@@ -502,6 +502,15 @@ __global__ void cat_kernel(floatX *out, const floatX *a, const floatX *b, int ar
     }
 }
 
+__global__ void div_kernel(floatX *out, const floatX *a, const floatX *b, int row, int col) {
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    int total_elements = row * col;
+
+    if (idx < total_elements) {
+        out[idx] = a[idx] / b[idx];
+    }
+}
+
 extern "C" {
 void cuda_init(void)
 {
@@ -788,6 +797,24 @@ void cuda_cat(void *out, const void *a, const void *b, int arow, int brow, int c
     int total_threads = (arow + brow) * col;
     int num_blocks = CEIL_DIV(total_threads, block_size);
     cat_kernel<<<num_blocks, block_size>>>((floatX *)out, (const floatX *)a, (const floatX *)b, arow, brow, col);
+    cuda_check(cudaGetLastError());
+}
+
+/*
+ * Element-wise division a / b
+ *
+ * @param out: output matrix(row, col)
+ * @param a: input matrix(row, col)
+ * @param b: input matrix(row, col)
+ * @param row: row size
+ * @param col: column size
+ */
+void cuda_div(void *out, const void *a, const void *b, int row, int col)
+{
+    int block_size = 256;
+    int total_threads = row * col;
+    int num_blocks = CEIL_DIV(total_threads, block_size);
+    div_kernel<<<num_blocks, block_size>>>((floatX *)out, (const floatX *)a, (const floatX *)b, row, col);
     cuda_check(cudaGetLastError());
 }
 
