@@ -571,3 +571,75 @@ func TestArrayDivInPlace(t *testing.T) {
 		assert.Equal(t, tt.expectedData, a.ToHost().([]float32))
 	}
 }
+
+func TestArrayRopeInPlace(t *testing.T) {
+	tests := []struct {
+		aShape, posShape Shape
+		aData            []float32
+		bData            []float32
+		expectedData     []float32
+		expectError      bool
+	}{
+		{
+			aShape:   Shape{2, 2},
+			posShape: Shape{1},
+			aData:    []float32{1.0, 2.0, 3.0, 4.0},
+			bData:    []float32{1.0},
+			expectedData: []float32{
+				1.0, 2.0,
+				-1.7449772, 4.685622,
+			},
+			expectError: false,
+		},
+		{
+			aShape:   Shape{2, 2, 4},
+			posShape: Shape{2},
+			aData: []float32{
+				1.0, 2.0, 3.0, 4.0,
+				5.0, 6.0, 7.0, 8.0,
+				9.0, 10.0, 11.0, 12.0,
+				13.0, 14.0, 15.0, 16.0,
+			},
+			bData: []float32{1.0, 0.01},
+			expectedData: []float32{
+				1.000000, 2.000000, 3.000000, 4.000000,
+				-2.34731436, 7.44916821, 6.91965151, 8.06959915,
+				9.000000, 10.000000, 11.000000, 12.000000,
+				-4.75666428, 18.50335503, 14.83925247, 16.14919662,
+			},
+			expectError: false,
+		},
+		{
+			aShape:       Shape{2, 2},
+			posShape:     Shape{2, 1},
+			aData:        []float32{1.0, 2.0, 3.0, 4.0},
+			bData:        []float32{1.0, 1.0},
+			expectedData: nil,
+			expectError:  true,
+		},
+	}
+
+	for _, tt := range tests {
+		a, err := MakeArray(tt.aShape, tt.aData)
+		assert.NoErr(t, err)
+		freqs, err := MakeArray(tt.posShape, tt.bData)
+		assert.NoErr(t, err)
+
+		err = a.RopeInPlace(freqs)
+		assert.Equal(t, tt.expectError, err != nil)
+		if err != nil {
+			continue
+		}
+
+		result := a.ToHost().([]float32)
+		if tt.expectedData != nil {
+			assert.SliceNear(t, tt.expectedData, result, 1e-6)
+		}
+	}
+	a, err := MakeArray(Shape{2, 2}, []float32{1, 2, 3, 4})
+	assert.NoErr(t, err)
+	freqs, err := MakeArray(Shape{1}, []int{1})
+	assert.NoErr(t, err)
+	err = a.RopeInPlace(freqs)
+	assert.Error(t, err)
+}

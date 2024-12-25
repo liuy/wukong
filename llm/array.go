@@ -131,6 +131,7 @@ type Runner interface {
 	Rmsnorm(x, w *Array, eps float32) (*Array, error)
 	Cat(a, b *Array) (*Array, error)
 	DivInPlace(a, b *Array) error
+	RopeInPlace(a, b *Array) error
 }
 
 // Array is a multi-dimensional array of any type in a row-major order. It is represented by a Shape in the
@@ -245,7 +246,7 @@ func DTypeOf(t reflect.Type) DType {
 		return GGML_TYPE_I16
 	case reflect.Int32:
 		return GGML_TYPE_I32
-	case reflect.Int64:
+	case reflect.Int64, reflect.Int:
 		return GGML_TYPE_I64
 	case reflect.Float32:
 		return GGML_TYPE_F32
@@ -367,6 +368,9 @@ func (a *Array) Cat(b *Array) (*Array, error) { return a.Runner.Cat(a, b) }
 
 // DivInPlace divides the array a by b in place
 func (a *Array) DivInPlace(b *Array) error { return a.Runner.DivInPlace(a, b) }
+
+// RopeInPlace applies the rope operation to the array a in place
+func (a *Array) RopeInPlace(b *Array) error { return a.Runner.RopeInPlace(a, b) }
 
 // Run array operations on the CUDA device
 type cudaRunner struct{}
@@ -527,5 +531,24 @@ func (r *cudaRunner) DivInPlace(a, b *Array) error {
 	col := a.GetDim(-1)
 	row := a.GetDim(0)
 	C.cuda_div(a.dptr, a.dptr, b.dptr, C.int(row), C.int(col))
+	return nil
+}
+
+func (r *cudaRunner) RopeInPlace(a, b *Array) error {
+	if a.dtype != b.dtype {
+		return fmt.Errorf("arrays must have the same dtype")
+	}
+	if a.NumDims() > 3 || b.NumDims() != 1 {
+		return fmt.Errorf("arrays shapes are not supported")
+	}
+	batch := 1
+	if a.NumDims() == 3 {
+		batch = a.GetDim(0)
+	}
+	row := a.GetDim(-2)
+	col := a.GetDim(-1)
+	HS := b.GetDim(0) * 2
+	NH := col / HS
+	C.cuda_rope(a.dptr, a.dptr, b.dptr, C.int(batch), C.int(row), C.int(NH), C.int(HS))
 	return nil
 }

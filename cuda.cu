@@ -364,20 +364,16 @@ __global__ void rope_kernel(floatX *out, const floatX *inp, const floatX *raw_fr
 {
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
     int HS_half = HS / 2;
-    if (idx >= B * T * 3 * NH * HS_half)
+    if (idx >= B * T * NH * HS_half)
         return;
-    // decode the qkv index early so we can early exit if it's a value index
-    int qkv = (idx / (NH * HS_half)) % 3;
-    if (qkv == 2) {
-        return; // no-op for v
-    }
-    // decode the individual indices and get the input index
-    int b = idx / (T * 3 * NH * HS_half);
-    int t = (idx / (3 * NH * HS_half)) % T;
+
+    // decode the individual indices
+    int b = idx / (T * NH * HS_half);
+    int t = (idx / (NH * HS_half)) % T;
     int h = (idx / HS_half) % NH;
     int d = idx % HS_half;
-    int idx_bt = b * (T * 3 * NH * HS) + t * (3 * NH * HS);
-    int idx_bth = idx_bt + qkv * (NH * HS) + h * HS;
+    int idx_bt = b * (T * NH * HS) + t * (NH * HS);
+    int idx_bth = idx_bt + h * HS;
     int idxi = idx_bth + 2 * d; // index in the input
 
     // fetch and compute frequency
@@ -740,11 +736,11 @@ void cuda_mqa_attention(void *out, const void *inp, int batch, int row, int qNH,
 }
 
 /*
- * RoPE: Rotated Positional Embedding
+ * RoPE: Rotated Positional Embedding for a single tensor
  *
- * @param out: output matrix(batch, row, 3, NH, HS) where the 3 is q,k,v. Note that the v part will be a no-op.
- * @param inp: input matrix(batch, row, 3, NH, HS) where the 3 is q,k,v
- * @freqs_cis: cos and sin frequencies for each element in q, k.
+ * @param out: output matrix(batch, row, NH, HS)
+ * @param inp: input matrix(batch, row, NH, HS)
+ * @raw_freqs: raw frequency tensor to compute the rotation angle (HS/2)
  * @param batch: batch size
  * @param row: row size
  * @param NH: number of heads
@@ -752,10 +748,8 @@ void cuda_mqa_attention(void *out, const void *inp, int batch, int row, int qNH,
  */
 void cuda_rope(void *out, const void *inp, const void *raw_freqs, int batch, int row, int NH, int HS)
 {
-    // we are going to launch exactly one thread per element of the output,
-    // so this single kernel launch will do RoPE for both q and k, and the threads for v will be a no-op
     int block_size = 256;
-    int total_threads = batch * row * 3 * NH * HS / 2;
+    int total_threads = batch * row * NH * HS / 2;  // divided by 2 since we process pairs
     int num_blocks = CEIL_DIV(total_threads, block_size);
     rope_kernel<<<num_blocks, block_size>>>((floatX *)out, (const floatX *)inp, (const floatX *)raw_freqs, batch, row, NH, HS);
     cuda_check(cudaGetLastError());
