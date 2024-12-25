@@ -229,9 +229,9 @@ func TestLoadTensors(t *testing.T) {
 		tensor, ok := tensors[tc.name]
 		assert.True(t, ok)
 		assert.NotNil(t, tensor)
-		assert.Equal(t, tc.shape, tensor.Shape())
+		assert.Equal(t, tc.shape, tensor.Shape)
 		assert.Equal(t, tc.dtype, tensor.dtype)
-		assert.Equal(t, tc.data, tensor.Data())
+		assert.Equal(t, tc.data, tensor.ToHost())
 	}
 
 	badGGUF := &GGUFFile{
@@ -384,39 +384,4 @@ func TestMmapReader(t *testing.T) {
 		_, err := MmapOpen("nonexistent.file")
 		assert.Error(t, err)
 	})
-}
-
-func TestCatTensors(t *testing.T) {
-	_, err := CatTensors(nil)
-	assert.Error(t, err)
-
-	_, err = CatTensors()
-	assert.Error(t, err)
-
-	tensor0, err := MakeTensor(Shape{1, 4}, []float32{1, 2, 3, 4})
-	assert.NoErr(t, err)
-	res, err := CatTensors(tensor0)
-	assert.NoErr(t, err)
-	assert.Equal(t, tensor0, res)
-
-	tensor1, err := MakeTensor(Shape{2, 2}, []float32{1, 2, 3, 4})
-	assert.NoErr(t, err)
-	tensor2, err := MakeTensor(Shape{2, 2}, []float32{5, 6, 7, 8})
-	assert.NoErr(t, err)
-	tensor3, err := MakeTensor(Shape{2, 2}, []float32{9, 10, 11, 12})
-	assert.NoErr(t, err)
-
-	result, err := CatTensors(tensor1, tensor2, tensor3)
-	assert.NoErr(t, err)
-	expectedShape := Shape{6, 2}
-	assert.Equal(t, expectedShape, result.Shape())
-	expectedData := []float32{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12}
-	assert.Equal(t, expectedData, result.Data())
-
-	tensor4, err := MakeTensor(Shape{2, 3}, []float32{1, 2, 3, 4, 5, 6})
-	assert.NoErr(t, err)
-	tensor5, err := MakeTensor(Shape{2, 2}, []float32{5, 6, 7, 8})
-	assert.NoErr(t, err)
-	_, err = CatTensors(tensor4, tensor5)
-	assert.Error(t, err)
 }

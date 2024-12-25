@@ -122,22 +122,22 @@ type Storage struct {
 }
 
 type Runner interface {
-	Softmax(a *Array) (*Array, error)
-	Matmul(a, b, bias *Array) (*Array, error)
-	ToDevice(a *Array, src unsafe.Pointer)
-	ToHost(a *Array) any
-	DeviceFree(a *Array)
-	Embedding(embd, ids *Array) (*Array, error)
-	Rmsnorm(x, w *Array, eps float32) (*Array, error)
-	Cat(a, b *Array) (*Array, error)
-	DivInPlace(a, b *Array) error
-	RopeInPlace(a, b *Array) error
+	Softmax(a *Tensor) (*Tensor, error)
+	Matmul(a, b, bias *Tensor) (*Tensor, error)
+	ToDevice(a *Tensor, src unsafe.Pointer)
+	ToHost(a *Tensor) any
+	DeviceFree(a *Tensor)
+	Embedding(embd, ids *Tensor) (*Tensor, error)
+	Rmsnorm(x, w *Tensor, eps float32) (*Tensor, error)
+	Cat(a, b *Tensor) (*Tensor, error)
+	DivInPlace(a, b *Tensor) error
+	RopeInPlace(a, b *Tensor) error
 }
 
-// Array is a multi-dimensional array of any type in a row-major order. It is represented by a Shape in the
-// form of a slice of integers, e.g, [2, 3, 4] for a 3D Array and a storage that contains the data of any type
+// Tensor is a multi-dimensional array of any type in a row-major order. It is represented by a Shape in the
+// form of a slice of integers, e.g, [2, 3, 4] for a 3D Tensor and a storage that contains the data of any type
 // in a contiguous block of memory, which a runner can perform device specific operations on.
-type Array struct {
+type Tensor struct {
 	Shape
 	Storage
 	Runner
@@ -155,7 +155,7 @@ func product(a []int) (ret int) {
 	return
 }
 
-// Returns the number of elements expected in the Array
+// Returns the number of elements expected in the Tensor
 func (s Shape) Len() int {
 	return product([]int(s))
 }
@@ -182,7 +182,7 @@ func (s Shape) SetDim(idx int, v int) {
 	}
 }
 
-// Returns true if Array is scalar, false otherwise
+// Returns true if Tensor is scalar, false otherwise
 func (s Shape) IsScalar() bool { return s.NumDims() == 0 }
 
 func (s Shape) Format(st fmt.State, r rune) {
@@ -196,30 +196,30 @@ func (s Shape) Format(st fmt.State, r rune) {
 	st.Write([]byte(")"))
 }
 
-func NewArray(s Shape, d DType) *Array {
-	a := &Array{
+func NewTensor(s Shape, d DType) *Tensor {
+	a := &Tensor{
 		s,
 		Storage{
 			dtype: d,
 		},
 		&cudaRunner{},
 	}
-	runtime.SetFinalizer(a, (*Array).DeviceFree)
+	runtime.SetFinalizer(a, (*Tensor).DeviceFree)
 	return a
 }
 
-// Creates a new Array from a Shape and data of DType. For e.g, create a 2D Array of float32
+// Creates a new Tensor from a Shape and data of DType. For e.g, create a 2D Tensor of float32
 //
 //	data := []float32{1, 2, 3, 4, 5, 6}
 //	ptr := unsafe.Pointer(&data[0])
-//	MakeArrayFrom(Shape{2, 3}, ptr, GGML_TYPE_F32)
+//	MakeTensorFrom(Shape{2, 3}, ptr, GGML_TYPE_F32)
 //
 // Parameters:
 //
 //	s : shape of the data
 //	p : pointer to the data in the memory
 //	t : DType of the data
-func MakeArrayFrom(s Shape, p unsafe.Pointer, t DType) (*Array, error) {
+func MakeTensorFrom(s Shape, p unsafe.Pointer, t DType) (*Tensor, error) {
 	if s.Len() <= 0 || s.NumDims() == 0 || s == nil {
 		return nil, fmt.Errorf("bad shape: %v", s)
 	}
@@ -233,7 +233,7 @@ func MakeArrayFrom(s Shape, p unsafe.Pointer, t DType) (*Array, error) {
 	if s.GetDim(-1)%info.blockSize != 0 {
 		return nil, fmt.Errorf("shape %v is not aligned to %d", s, info.blockSize)
 	}
-	a := NewArray(s, t)
+	a := NewTensor(s, t)
 	a.ToDevice(p)
 	return a, nil
 }
@@ -257,13 +257,13 @@ func DTypeOf(t reflect.Type) DType {
 	}
 }
 
-// Creates a new Array from a Shape and a go slice of data of any type
+// Creates a new Tensor from a Shape and a go slice of data of any type
 // For e.g,
 //
-//	MakeArray(Shape{2, 3}, []float32{1, 2, 3, 4, 5, 6})
+//	MakeTensor(Shape{2, 3}, []float32{1, 2, 3, 4, 5, 6})
 //
-// creates a 2D Array of float32
-func MakeArray(s Shape, data any) (ret *Array, e error) {
+// creates a 2D Tensor of float32
+func MakeTensor(s Shape, data any) (ret *Tensor, e error) {
 	if s == nil {
 		return nil, fmt.Errorf("shape is nil")
 	}
@@ -274,12 +274,12 @@ func MakeArray(s Shape, data any) (ret *Array, e error) {
 	if v.Len() != s.Len() {
 		return nil, fmt.Errorf("data length %d does not match shape length %d", v.Len(), s.Len())
 	}
-	ret = NewArray(s, DTypeOf(v.Type().Elem()))
+	ret = NewTensor(s, DTypeOf(v.Type().Elem()))
 	ret.ToDevice(unsafe.Pointer(v.Pointer()))
 	return ret, nil
 }
 
-func (t *Array) Format(st fmt.State, r rune) {
+func (t *Tensor) Format(st fmt.State, r rune) {
 	s := fmt.Sprintf("Shape: %v\nType: %v", t.Shape, t.ElemType())
 	data := "\nData:\n"
 	stride := t.GetDim(-1)
@@ -309,26 +309,26 @@ func RandFloatSlice(size int) any {
 func CudaSetup()    { C.cuda_init() }
 func CudaTeardown() { C.cuda_fini() }
 
-// Returns the element type of the Array
-func (a *Array) ElemType() DType { return a.dtype }
+// Returns the element type of the Tensor
+func (a *Tensor) ElemType() DType { return a.dtype }
 
-// Returns the element size of the Array in bytes
-func (a *Array) ElemBlockSize() int {
+// Returns the element size of the Tensor in bytes
+func (a *Tensor) ElemBlockSize() int {
 	if info, ok := DTypeInfo[a.dtype]; ok {
 		return info.blockSize
 	}
 	panic(fmt.Sprintf("Bad dtype: %d", a.dtype))
 }
 
-func (a *Array) ElemTypeSize() int {
+func (a *Tensor) ElemTypeSize() int {
 	if info, ok := DTypeInfo[a.dtype]; ok {
 		return info.typeSize
 	}
 	panic(fmt.Sprintf("Bad dtype: %d", a.dtype))
 }
 
-// Returns the total size of the Array in bytes
-func (a *Array) Size() int {
+// Returns the total size of the Tensor in bytes
+func (a *Tensor) Size() int {
 	info, ok := DTypeInfo[a.dtype]
 	if !ok {
 		panic(fmt.Sprintf("Bad dtype: %d", a.dtype))
@@ -343,46 +343,46 @@ func (a *Array) Size() int {
 }
 
 // Softmax in a row-wise manner
-func (a *Array) Softmax() (*Array, error) { return a.Runner.Softmax(a) }
+func (a *Tensor) Softmax() (*Tensor, error) { return a.Runner.Softmax(a) }
 
 // Fused matrix multiplication: a @ b + bias(could be nil).
-func (a *Array) Matmul(b, bias *Array) (*Array, error) { return a.Runner.Matmul(a, b, bias) }
+func (a *Tensor) Matmul(b, bias *Tensor) (*Tensor, error) { return a.Runner.Matmul(a, b, bias) }
 
 // Copy data from host to device
-func (a *Array) ToDevice(src unsafe.Pointer) { a.Runner.ToDevice(a, src) }
+func (a *Tensor) ToDevice(src unsafe.Pointer) { a.Runner.ToDevice(a, src) }
 
 // Copy data from device to host
-func (a *Array) ToHost() any { return a.Runner.ToHost(a) }
+func (a *Tensor) ToHost() any { return a.Runner.ToHost(a) }
 
 // Free device memory
-func (a *Array) DeviceFree() { a.Runner.DeviceFree(a) }
+func (a *Tensor) DeviceFree() { a.Runner.DeviceFree(a) }
 
 // Embedding returns the embeddings of the given idsss
-func (a *Array) Embedding(ids *Array) (*Array, error) { return a.Runner.Embedding(a, ids) }
+func (a *Tensor) Embedding(ids *Tensor) (*Tensor, error) { return a.Runner.Embedding(a, ids) }
 
 // Rmsnorm returns the root mean square normalization of the given array
-func (a *Array) Rmsnorm(x *Array, eps float32) (*Array, error) { return a.Runner.Rmsnorm(a, x, eps) }
+func (a *Tensor) Rmsnorm(x *Tensor, eps float32) (*Tensor, error) { return a.Runner.Rmsnorm(a, x, eps) }
 
 // Cat returns the concatenation of the given arrays along the first dimension
-func (a *Array) Cat(b *Array) (*Array, error) { return a.Runner.Cat(a, b) }
+func (a *Tensor) Cat(b *Tensor) (*Tensor, error) { return a.Runner.Cat(a, b) }
 
 // DivInPlace divides the array a by b in place
-func (a *Array) DivInPlace(b *Array) error { return a.Runner.DivInPlace(a, b) }
+func (a *Tensor) DivInPlace(b *Tensor) error { return a.Runner.DivInPlace(a, b) }
 
 // RopeInPlace applies the rope operation to the array a in place
-func (a *Array) RopeInPlace(b *Array) error { return a.Runner.RopeInPlace(a, b) }
+func (a *Tensor) RopeInPlace(b *Tensor) error { return a.Runner.RopeInPlace(a, b) }
 
 // Run array operations on the CUDA device
 type cudaRunner struct{}
 
-func (r *cudaRunner) ToDevice(a *Array, src unsafe.Pointer) {
+func (r *cudaRunner) ToDevice(a *Tensor, src unsafe.Pointer) {
 	if a.dptr == nil {
 		a.dptr = C.cuda_malloc(C.size_t(a.Size()))
 	}
 	C.cuda_to_device(a.dptr, src, C.size_t(a.Size()))
 }
 
-func (r *cudaRunner) ToHost(a *Array) any {
+func (r *cudaRunner) ToHost(a *Tensor) any {
 	dst := make([]byte, a.Size())
 	C.cuda_to_host(unsafe.Pointer(&dst[0]), a.dptr, C.size_t(a.Size()))
 	switch a.dtype {
@@ -403,7 +403,7 @@ func (r *cudaRunner) ToHost(a *Array) any {
 	}
 }
 
-func (r *cudaRunner) DeviceFree(a *Array) {
+func (r *cudaRunner) DeviceFree(a *Tensor) {
 	if a.dptr != nil {
 		// fmt.Printf("Freeing device memory at %p\n", a.dptr)
 		C.cuda_free(a.dptr)
@@ -411,17 +411,17 @@ func (r *cudaRunner) DeviceFree(a *Array) {
 	}
 }
 
-func (r *cudaRunner) Softmax(a *Array) (*Array, error) {
+func (r *cudaRunner) Softmax(a *Tensor) (*Tensor, error) {
 	col := a.GetDim(-1)
 	row := a.Len() / col
 	out := C.cuda_malloc(C.size_t(row * col * a.ElemTypeSize() / a.ElemBlockSize()))
 	C.cuda_softmax(out, a.dptr, C.int(row), C.int(col))
-	ret := NewArray(a.Shape, a.dtype)
+	ret := NewTensor(a.Shape, a.dtype)
 	ret.dptr = out
 	return ret, nil
 }
 
-func (r *cudaRunner) Matmul(a, b, bias *Array) (*Array, error) {
+func (r *cudaRunner) Matmul(a, b, bias *Tensor) (*Tensor, error) {
 	// For now we only support b as a 2D array
 	if a.NumDims() < 2 || b.NumDims() != 2 {
 		return nil, fmt.Errorf("arrays must have at least 2 dimensions")
@@ -443,12 +443,12 @@ func (r *cudaRunner) Matmul(a, b, bias *Array) (*Array, error) {
 	C.cuda_matmul(out, a.dptr, b.dptr, biasPtr, C.int(row), C.int(column), C.int(oc))
 	shape := a.Shape
 	shape[len(shape)-1] = oc
-	ret := NewArray(shape, a.dtype)
+	ret := NewTensor(shape, a.dtype)
 	ret.dptr = out
 	return ret, nil
 }
 
-func (r *cudaRunner) Embedding(embd, ids *Array) (*Array, error) {
+func (r *cudaRunner) Embedding(embd, ids *Tensor) (*Tensor, error) {
 	if ids.ElemType() != GGML_TYPE_I32 {
 		return nil, fmt.Errorf("index must be an int32 integer")
 	}
@@ -466,12 +466,12 @@ func (r *cudaRunner) Embedding(embd, ids *Array) (*Array, error) {
 	}
 	out := C.cuda_malloc(C.size_t(batch * row * col * embd.ElemTypeSize() / embd.ElemBlockSize()))
 	C.cuda_embedding(out, ids.dptr, embd.dptr, C.int(batch), C.int(row), C.int(col))
-	ret := NewArray(Shape{batch, row, col}, embd.dtype)
+	ret := NewTensor(Shape{batch, row, col}, embd.dtype)
 	ret.dptr = out
 	return ret, nil
 }
 
-func (r *cudaRunner) Rmsnorm(a, x *Array, eps float32) (*Array, error) {
+func (r *cudaRunner) Rmsnorm(a, x *Tensor, eps float32) (*Tensor, error) {
 	if x.GetDim(-1) != a.GetDim(-1) {
 		return nil, fmt.Errorf("weight shape does not match")
 	}
@@ -480,12 +480,12 @@ func (r *cudaRunner) Rmsnorm(a, x *Array, eps float32) (*Array, error) {
 	N := ne / col
 	out := C.cuda_malloc(C.size_t(ne * x.ElemTypeSize() / x.ElemBlockSize()))
 	C.cuda_rmsnorm(out, x.dptr, a.dptr, C.int(N), C.int(col), C.float(eps))
-	ret := NewArray(x.Shape, x.dtype)
+	ret := NewTensor(x.Shape, x.dtype)
 	ret.dptr = out
 	return ret, nil
 }
 
-func (r *cudaRunner) Cat(a, b *Array) (*Array, error) {
+func (r *cudaRunner) Cat(a, b *Tensor) (*Tensor, error) {
 	if a.dtype != b.dtype {
 		return nil, fmt.Errorf("arrays must have the same dtype")
 	}
@@ -502,7 +502,7 @@ func (r *cudaRunner) Cat(a, b *Array) (*Array, error) {
 	C.cuda_cat(out, a.dptr, b.dptr, C.int(arow), C.int(brow), C.int(col))
 	shape := a.Shape
 	shape[0] = arow + brow
-	ret := NewArray(shape, a.dtype)
+	ret := NewTensor(shape, a.dtype)
 	ret.dptr = out
 	return ret, nil
 }
@@ -521,7 +521,7 @@ func slicesEqual(slice1, slice2 []int) bool {
 	return true
 }
 
-func (r *cudaRunner) DivInPlace(a, b *Array) error {
+func (r *cudaRunner) DivInPlace(a, b *Tensor) error {
 	if a.dtype != b.dtype {
 		return fmt.Errorf("arrays must have the same dtype")
 	}
@@ -534,7 +534,7 @@ func (r *cudaRunner) DivInPlace(a, b *Array) error {
 	return nil
 }
 
-func (r *cudaRunner) RopeInPlace(a, b *Array) error {
+func (r *cudaRunner) RopeInPlace(a, b *Tensor) error {
 	if a.dtype != b.dtype {
 		return fmt.Errorf("arrays must have the same dtype")
 	}

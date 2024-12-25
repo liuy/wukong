@@ -25,7 +25,7 @@ func TestShapeLen(t *testing.T) {
 	assert.Equal(t, s.Len(), 1) // No dimensions means a scalar
 }
 
-func TestArrayElemSize(t *testing.T) {
+func TestTensorElemSize(t *testing.T) {
 	tests := []struct {
 		shape    Shape
 		data     any
@@ -36,14 +36,14 @@ func TestArrayElemSize(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		a, err := MakeArray(tt.shape, tt.data)
+		a, err := MakeTensor(tt.shape, tt.data)
 		assert.NoErr(t, err)
 		assert.NotNil(t, a)
 		assert.Equal(t, a.ElemTypeSize()/a.ElemBlockSize(), tt.expected)
 	}
 }
 
-func TestArraySize(t *testing.T) {
+func TestTensorSize(t *testing.T) {
 	tests := []struct {
 		shape    Shape
 		data     any
@@ -54,7 +54,7 @@ func TestArraySize(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		a, err := MakeArray(tt.shape, tt.data)
+		a, err := MakeTensor(tt.shape, tt.data)
 		assert.NoErr(t, err)
 		assert.Equal(t, a.Size(), tt.expected)
 	}
@@ -100,7 +100,7 @@ func TestShapeIsScalar(t *testing.T) {
 	assert.False(t, s.IsScalar())
 }
 
-func TestArrayFormat(t *testing.T) {
+func TestTensorFormat(t *testing.T) {
 	tests := []struct {
 		shape    Shape
 		data     any
@@ -119,7 +119,7 @@ func TestArrayFormat(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		a, err := MakeArray(tt.shape, tt.data)
+		a, err := MakeTensor(tt.shape, tt.data)
 		assert.NoErr(t, err)
 		result := fmt.Sprintf("%v", a)
 		assert.Equal(t, tt.expected, result)
@@ -134,7 +134,7 @@ func TestShapeFormat(t *testing.T) {
 	assert.Equal(t, result, expected)
 }
 
-func TestMakeArray(t *testing.T) {
+func TestMakeTensor(t *testing.T) {
 	tests := []struct {
 		Shape Shape
 		data  any
@@ -148,23 +148,23 @@ func TestMakeArray(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		_, err := MakeArray(tt.Shape, tt.data)
+		_, err := MakeTensor(tt.Shape, tt.data)
 		assert.Equal(t, err == nil, tt.valid)
 	}
 }
 
-func TestArrayDeviceFree(t *testing.T) {
+func TestTensorDeviceFree(t *testing.T) {
 	var text string
 	shape := Shape{2, 3}
 	v := reflect.ValueOf([]float32{1, 2, 3, 4, 5, 6})
-	a := &Array{shape, Storage{
+	a := &Tensor{shape, Storage{
 		dtype: DTypeOf(v.Type().Elem()),
 	}, &cudaRunner{}}
 	a.ToDevice(unsafe.Pointer(v.Pointer()))
 	assert.NotNil(t, a.dptr)
 	assert.Equal(t, []float32{1, 2, 3, 4, 5, 6}, a.ToHost().([]float32))
 
-	runtime.SetFinalizer(a, func(a *Array) {
+	runtime.SetFinalizer(a, func(a *Tensor) {
 		a.DeviceFree()
 		assert.Nil(t, a.dptr)
 		text = "DeviceFree called"
@@ -175,7 +175,7 @@ func TestArrayDeviceFree(t *testing.T) {
 	assert.Equal(t, "DeviceFree called", text)
 }
 
-func TestArraySoftmax(t *testing.T) {
+func TestTensorSoftmax(t *testing.T) {
 	tests := []struct {
 		shape    Shape
 		input    []float32
@@ -185,14 +185,14 @@ func TestArraySoftmax(t *testing.T) {
 		{Shape{2, 1, 3}, []float32{3.0, 1.0, 0.2, 1, 1000, 2}, []float32{0.8360188, 0.11314284, 0.05083836, 0.0, 1.0, 0.0}},
 	}
 
-	a, err := MakeArray(Shape{3}, []float32{1.0, 2.0, 3.0})
+	a, err := MakeTensor(Shape{3}, []float32{1.0, 2.0, 3.0})
 	assert.NoErr(t, err)
 	res, err := a.Softmax()
 	assert.NoErr(t, err)
 	assert.SliceNear(t, []float32{0.0900305, 0.2447284, 0.6652409}, res.ToHost().([]float32), 1e-6)
 
 	for _, tt := range tests {
-		array, err := MakeArray(tt.shape, tt.input)
+		array, err := MakeTensor(tt.shape, tt.input)
 		assert.NoErr(t, err)
 
 		res, err := array.Softmax()
@@ -201,7 +201,7 @@ func TestArraySoftmax(t *testing.T) {
 	}
 }
 
-func TestArrayMatmul(t *testing.T) {
+func TestTensorMatmul(t *testing.T) {
 	tests := []struct {
 		a, b, bias                       Shape
 		aData, bData, biasData, expected []float32
@@ -240,13 +240,13 @@ func TestArrayMatmul(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		a, err := MakeArray(tt.a, tt.aData)
+		a, err := MakeTensor(tt.a, tt.aData)
 		assert.NoErr(t, err)
-		b, err := MakeArray(tt.b, tt.bData)
+		b, err := MakeTensor(tt.b, tt.bData)
 		assert.NoErr(t, err)
-		var bias *Array
+		var bias *Tensor
 		if tt.biasData != nil {
-			bias, err = MakeArray(tt.bias, tt.biasData)
+			bias, err = MakeTensor(tt.bias, tt.biasData)
 			assert.NoErr(t, err)
 		}
 
@@ -259,10 +259,10 @@ func TestArrayMatmul(t *testing.T) {
 	}
 }
 
-func TestArrayMatmulSoftmax(t *testing.T) {
-	a, err := MakeArray(Shape{2, 3}, []float32{1, 2, 3, 4, 5, 6})
+func TestTensorMatmulSoftmax(t *testing.T) {
+	a, err := MakeTensor(Shape{2, 3}, []float32{1, 2, 3, 4, 5, 6})
 	assert.NoErr(t, err)
-	b, err := MakeArray(Shape{3, 3}, []float32{1, 4, 7, 2, 5, 8, 3, 6, 9})
+	b, err := MakeTensor(Shape{3, 3}, []float32{1, 4, 7, 2, 5, 8, 3, 6, 9})
 	assert.NoErr(t, err)
 	c, err := a.Matmul(b, nil)
 	assert.NoErr(t, err)
@@ -272,7 +272,7 @@ func TestArrayMatmulSoftmax(t *testing.T) {
 	assert.SliceNear(t, expected, d.ToHost().([]float32), 1e-6)
 }
 
-func TestArrayEmbedding(t *testing.T) {
+func TestTensorEmbedding(t *testing.T) {
 	tests := []struct {
 		embdShape, idsShape Shape
 		embdData, idsData   any
@@ -333,9 +333,9 @@ func TestArrayEmbedding(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		embd, err := MakeArray(tt.embdShape, tt.embdData)
+		embd, err := MakeTensor(tt.embdShape, tt.embdData)
 		assert.NoErr(t, err)
-		ids, err := MakeArray(tt.idsShape, tt.idsData)
+		ids, err := MakeTensor(tt.idsShape, tt.idsData)
 		assert.NoErr(t, err)
 
 		result, err := embd.Embedding(ids)
@@ -347,7 +347,7 @@ func TestArrayEmbedding(t *testing.T) {
 	}
 }
 
-func TestMakeArrayFrom(t *testing.T) {
+func TestMakeTensorFrom(t *testing.T) {
 	tests := []struct {
 		name        string
 		shape       Shape
@@ -412,7 +412,7 @@ func TestMakeArrayFrom(t *testing.T) {
 			if tt.data != nil {
 				ptr = unsafe.Pointer(&tt.data[0])
 			}
-			arr, err := MakeArrayFrom(tt.shape, ptr, tt.dtype)
+			arr, err := MakeTensorFrom(tt.shape, ptr, tt.dtype)
 
 			if tt.expectError {
 				assert.Error(t, err)
@@ -427,7 +427,7 @@ func TestMakeArrayFrom(t *testing.T) {
 	}
 }
 
-func TestArrayRmsnorm(t *testing.T) {
+func TestTensorRmsnorm(t *testing.T) {
 	tests := []struct {
 		x        []float32
 		w        []float32
@@ -457,10 +457,10 @@ func TestArrayRmsnorm(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		x, err := MakeArray(tt.xShape, tt.x)
+		x, err := MakeTensor(tt.xShape, tt.x)
 		assert.NoErr(t, err)
 
-		w, err := MakeArray(tt.wShape, tt.w)
+		w, err := MakeTensor(tt.wShape, tt.w)
 		assert.NoErr(t, err)
 
 		result, err := w.Rmsnorm(x, tt.eps)
@@ -473,7 +473,7 @@ func TestArrayRmsnorm(t *testing.T) {
 		assert.SliceNear(t, tt.expected, result.ToHost().([]float32), 1e-6)
 	}
 }
-func TestArrayCat(t *testing.T) {
+func TestTensorCat(t *testing.T) {
 	tests := []struct {
 		aShape, bShape Shape
 		aData, bData   []float32
@@ -505,9 +505,9 @@ func TestArrayCat(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		a, err := MakeArray(tt.aShape, tt.aData)
+		a, err := MakeTensor(tt.aShape, tt.aData)
 		assert.NoErr(t, err)
-		b, err := MakeArray(tt.bShape, tt.bData)
+		b, err := MakeTensor(tt.bShape, tt.bData)
 		assert.NoErr(t, err)
 
 		result, err := a.Cat(b)
@@ -520,15 +520,15 @@ func TestArrayCat(t *testing.T) {
 		assert.Equal(t, tt.expectedData, result.ToHost().([]float32))
 	}
 	// Test different data types
-	a, err := MakeArray(Shape{3, 2}, []int32{1, 2, 3, 4, 5, 6})
+	a, err := MakeTensor(Shape{3, 2}, []int32{1, 2, 3, 4, 5, 6})
 	assert.NoErr(t, err)
-	b, err := MakeArray(Shape{2, 3}, []float32{7, 8, 9, 10, 11, 12})
+	b, err := MakeTensor(Shape{2, 3}, []float32{7, 8, 9, 10, 11, 12})
 	assert.NoErr(t, err)
 	_, err = a.Cat(b)
 	assert.Error(t, err)
 }
 
-func TestArrayDivInPlace(t *testing.T) {
+func TestTensorDivInPlace(t *testing.T) {
 	tests := []struct {
 		aShape, bShape Shape
 		aData, bData   []float32
@@ -557,9 +557,9 @@ func TestArrayDivInPlace(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		a, err := MakeArray(tt.aShape, tt.aData)
+		a, err := MakeTensor(tt.aShape, tt.aData)
 		assert.NoErr(t, err)
-		b, err := MakeArray(tt.bShape, tt.bData)
+		b, err := MakeTensor(tt.bShape, tt.bData)
 		assert.NoErr(t, err)
 
 		err = a.DivInPlace(b)
@@ -572,7 +572,7 @@ func TestArrayDivInPlace(t *testing.T) {
 	}
 }
 
-func TestArrayRopeInPlace(t *testing.T) {
+func TestTensorRopeInPlace(t *testing.T) {
 	tests := []struct {
 		aShape, posShape Shape
 		aData            []float32
@@ -620,9 +620,9 @@ func TestArrayRopeInPlace(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		a, err := MakeArray(tt.aShape, tt.aData)
+		a, err := MakeTensor(tt.aShape, tt.aData)
 		assert.NoErr(t, err)
-		freqs, err := MakeArray(tt.posShape, tt.bData)
+		freqs, err := MakeTensor(tt.posShape, tt.bData)
 		assert.NoErr(t, err)
 
 		err = a.RopeInPlace(freqs)
@@ -636,9 +636,9 @@ func TestArrayRopeInPlace(t *testing.T) {
 			assert.SliceNear(t, tt.expectedData, result, 1e-6)
 		}
 	}
-	a, err := MakeArray(Shape{2, 2}, []float32{1, 2, 3, 4})
+	a, err := MakeTensor(Shape{2, 2}, []float32{1, 2, 3, 4})
 	assert.NoErr(t, err)
-	freqs, err := MakeArray(Shape{1}, []int{1})
+	freqs, err := MakeTensor(Shape{1}, []int{1})
 	assert.NoErr(t, err)
 	err = a.RopeInPlace(freqs)
 	assert.Error(t, err)
