@@ -1,5 +1,46 @@
 #include "wukong.h"
 
+#define QK_K 256
+
+dtype_info dtype_infos[GGML_TYPE_COUNT] = {
+    {"F32", 1, 4},
+    {"F16", 1, 2},
+    {"GGML_TYPE_Q4_0", 32, 2 + 16},
+    {"GGML_TYPE_Q4_1", 32, 2 + 2 + 16},
+    {"GGML_TYPE_Q4_2", 32, 2 + 2 + 16},
+    {"GGML_TYPE_Q4_3", 32, 2 + 2 + 16},
+    {"GGML_TYPE_Q5_0", 32, 2 + 4 + 16},
+    {"GGML_TYPE_Q5_1", 32, 2 + 2 + 4 + 16},
+    {"GGML_TYPE_Q8_0", 32, 2 + 32},
+    {"GGML_TYPE_Q8_1", 32, 4 + 4 + 32},
+    {"GGML_TYPE_Q2_K", 256, 2 + 2 + QK_K / 16 + QK_K / 4},
+    {"GGML_TYPE_Q3_K", 256, 2 + QK_K / 4 + QK_K / 8 + 12},
+    {"GGML_TYPE_Q4_K", 256, 2 + 2 + QK_K / 2 + 12},
+    {"GGML_TYPE_Q5_K", 256, 2 + 2 + QK_K / 2 + QK_K / 8 + 12},
+    {"GGML_TYPE_Q6_K", 256, 2 + QK_K / 2 + QK_K / 4 + QK_K / 16},
+    {"GGML_TYPE_Q8_K", 256, 4 + QK_K + QK_K / 8},
+    {"GGML_TYPE_IQ2_XXS", 256, 2 + QK_K / 4},
+    {"GGML_TYPE_IQ2_XS", 256, 2 + QK_K / 4 + QK_K / 32},
+    {"GGML_TYPE_IQ3_XXS", 256, 2 + QK_K / 4 + QK_K / 8},
+    {"GGML_TYPE_IQ1_S", 256, 2 + QK_K / 8 + QK_K / 16},
+    {"GGML_TYPE_IQ4_NL", 32, 2 + 16},
+    {"GGML_TYPE_IQ3_S", 256, 2 + QK_K / 4 + QK_K / 8 + QK_K / 32 + 4},
+    {"GGML_TYPE_IQ2_S", 256, 2 + QK_K / 4 + QK_K / 16},
+    {"GGML_TYPE_IQ4_XS", 256, 2 + 2 + QK_K / 2 + QK_K / 64},
+    {"Int8", 1, 1},
+    {"Int16", 1, 2},
+    {"Int32", 1, 4},
+    {"Int64", 1, 8},
+    {"F64", 1, 8},
+    {"GGML_TYPE_IQ1_M", 256, QK_K / 8 + QK_K / 16 + QK_K / 32},
+    {"BF16", 1, 2},
+    {"GGML_TYPE_Q4_0_4_4", 32, 2 + 16},
+    {"GGML_TYPE_Q4_0_4_8", 32, 2 + 16},
+    {"GGML_TYPE_Q4_0_8_8", 32, 2 + 16},
+    {"GGML_TYPE_TQ1_0", 256, 2 + 4 * 13},
+    {"GGML_TYPE_TQ2_0", 256, 2 + 64}
+};
+
 // cuBLAS workspace. Hardcoding to 32MiB but only Hopper needs 32, for others 4 is OK
 static size_t cublaslt_workspace_size = 32 * 1024 * 1024;
 static void* cublaslt_workspace = NULL;
@@ -507,6 +548,25 @@ __global__ void div_kernel(floatX *out, const floatX *a, const floatX *b, int ro
     }
 }
 
+__global__ void dequantize_Q8_0(float *out, const block_q8_0 *inp, int row, int nb, int bs) {
+    int block_idx = blockIdx.x * blockDim.x + threadIdx.x;
+    int total_blocks = row * nb;
+
+    if (block_idx >= total_blocks)
+        return;
+
+    int r = block_idx / nb; // row index
+    int b = block_idx % nb; // block index
+
+    const block_q8_0 *block = inp + r * nb + b;
+    float scale = __half2float(block->scale);
+#pragma unroll
+    for (int i = 0; i < bs; ++i) {
+	    int out_idx = r * nb * bs + b * bs + i;
+	    out[out_idx] = scale * block->d[i];
+    }
+}
+
 extern "C" {
 void cuda_init(void)
 {
@@ -812,4 +872,34 @@ void cuda_div(void *out, const void *a, const void *b, int row, int col)
     cuda_check(cudaGetLastError());
 }
 
+/*
+ * Dequantize the quantized input tensor from dtype to float
+ *
+ * @param out: output matrix(row, col)
+ * @param inp: input matrix(row, col)
+ * @param row: row size
+ * @param col: column size
+ * @param type: quantization dtype
+ */
+void cuda_dequantize(void *out, const void *inp, int row, int col, int type)
+{
+    if (type < 0 || type >= GGML_TYPE_COUNT)
+        panic("Unsupported quantization type: %d", type);
+
+    auto info = dtype_infos[type];
+    int nb = col / info.block_size;
+    int bs = info.block_size;
+    int total_blocks = row * nb;
+    int block_size = 256;
+    int num_blocks = CEIL_DIV(total_blocks, block_size);
+    switch (type) {
+    case GGML_TYPE_Q8_0:
+            dequantize_Q8_0<<<num_blocks, block_size>>>((float *)out, (const block_q8_0 *)inp, row, nb, bs);
+            break;
+        default:
+            panic("Unsupported quantization type: %s", dtype_infos[type].name);
+	}
+    cuda_check(cudaGetLastError());
 }
+
+} // extern "C"
