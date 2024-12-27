@@ -640,8 +640,15 @@ void cuda_to_host(void* dst, void* src, size_t size)
  * @param oc: output column size
  */
 void cuda_matmul(void *out, const void *inp, const void *weight, const void *bias,
-                int row, int column, int oc)
+                int row, int column, int oc, int dtype)
 {
+    if (dtype != GGML_TYPE_F32) {
+        void *dinp = cuda_malloc(row * column * sizeof(float));
+        cuda_dequantize(dinp, inp, row, column, dtype);
+        cuda_matmul_cublaslt(out, dinp, weight, bias, row, column, oc);
+        cuda_free(dinp);
+        return;
+    }
     return cuda_matmul_cublaslt(out, inp, weight, bias, row, column, oc);
 }
 
@@ -827,14 +834,26 @@ void cuda_rope(void *out, const void *inp, const void *raw_freqs, int batch, int
  * @param row: row size (number of indices)
  * @param col: column size (embedding size)
  */
-void cuda_embedding(void* out, const void *inp, const void *embd, int batch, int row, int col)
+void cuda_embedding(void* out, const void *inp, const void *embd, int batch, int row, int col, int dtype)
 {
-    assert(col % x128::size == 0); // make sure col is multiple of 128-bit
     const int block_size = 256;
     const int N = batch * row * col;
     const int grid_size = CEIL_DIV(N, (block_size * x128::size));
-    get_embeddings_kernel<<<grid_size, block_size>>>((floatX *)out, (const int *)inp, (const floatX *)embd, batch, row, col);
+    if (dtype == GGML_TYPE_F32) {
+        assert(col % x128::size == 0); // make sure col is multiple of 128-bit
+        get_embeddings_kernel << <grid_size, block_size >> > ((floatX*)out, (const int*)inp, (const floatX*)embd, batch, row, col);
+        cuda_check(cudaGetLastError());
+        return;
+    }
+    auto info = dtype_infos[dtype];
+    assert(col % (info.block_size * x128::size) == 0);
+    int c = col / info.block_size * info.type_size;
+    void* qout = cuda_malloc(batch * row * c * sizeof(int));
+    get_embeddings_kernel << <grid_size, block_size >> > ((floatX*)qout, (const int*)inp, (const floatX*)embd, batch, row, c);
+    cuda_dequantize(out, qout, row, col, dtype);
     cuda_check(cudaGetLastError());
+    cuda_free(qout);
+    return;
 }
 
 /*

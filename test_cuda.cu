@@ -54,10 +54,10 @@ TEST(Cuda, cuda_matmul)
     cuda_to_device(d_weight, weight, c * oc * sizeof(float));
     cuda_to_device(d_bias, bias, oc * sizeof(float));
 
-    cuda_matmul(d_out, d_inp, d_weight, d_bias, b * r, c, oc);
+    cuda_matmul(d_out, d_inp, d_weight, d_bias, b * r, c, oc, GGML_TYPE_F32);
     cuda_to_host(out, d_out, b * r * oc * sizeof(float));
     assert_array_eq(res, out, b * r * oc);
-    cuda_matmul(d_out, d_inp, d_weight, nullptr, b * r, c, oc);
+    cuda_matmul(d_out, d_inp, d_weight, nullptr, b * r, c, oc, GGML_TYPE_F32);
     cuda_to_host(out, d_out, b * r * oc * sizeof(float));
     assert_array_eq(res_nob, out, b * r * oc);
 
@@ -338,7 +338,7 @@ TEST(Cuda, cuda_swiglu)
     cuda_to_device(d_inp, inp, batch * row * col * sizeof(float));
     cuda_to_device(d_weights_fc, weights_fc, 2 * hidden_size * col * sizeof(float));
 
-    cuda_matmul(d_fcout, d_inp, d_weights_fc, nullptr, batch * row, col, 2 * hidden_size);
+    cuda_matmul(d_fcout, d_inp, d_weights_fc, nullptr, batch * row, col, 2 * hidden_size, GGML_TYPE_F32);
     cuda_swiglu(d_out, d_fcout, batch, row, hidden_size);
 
     float out[batch * row * hidden_size] = {0};
@@ -523,7 +523,7 @@ TEST(Cuda, cuda_embedding) {
     cudaMemcpy(d_inp, inp, sizeof(int) * batch * row, cudaMemcpyHostToDevice);
     cudaMemcpy(d_embd, embd, sizeof(float) * vocab_size * col, cudaMemcpyHostToDevice);
 
-    cuda_embedding(d_out, d_inp, d_embd, batch, row, col);
+    cuda_embedding(d_out, d_inp, d_embd, batch, row, col, GGML_TYPE_F32);
 
     cudaMemcpy(h_out, d_out, sizeof(float) * batch * row * col, cudaMemcpyDeviceToHost);
 

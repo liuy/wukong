@@ -129,6 +129,7 @@ type Runner interface {
 	Cat(a, b *Tensor) (*Tensor, error)
 	DivInPlace(a, b *Tensor) error
 	RopeInPlace(a, b *Tensor) error
+	Dequantize(a *Tensor) (*Tensor, error)
 }
 
 // Tensor is a multi-dimensional array of any type in a row-major order. It is represented by a Shape in the
@@ -358,6 +359,9 @@ func (a *Tensor) DivInPlace(b *Tensor) error { return a.Runner.DivInPlace(a, b) 
 // RopeInPlace applies the rope operation to the array a in place
 func (a *Tensor) RopeInPlace(b *Tensor) error { return a.Runner.RopeInPlace(a, b) }
 
+// Dequantize dequantizes the tensor to float32
+func (a *Tensor) Dequantize() (*Tensor, error) { return a.Runner.Dequantize(a) }
+
 // Run array operations on the CUDA device
 type cudaRunner struct{}
 
@@ -366,6 +370,19 @@ func (r *cudaRunner) ToDevice(a *Tensor, src unsafe.Pointer) {
 		a.dptr = C.cuda_malloc(C.size_t(a.Size()))
 	}
 	C.cuda_to_device(a.dptr, src, C.size_t(a.Size()))
+}
+
+func (r *cudaRunner) Dequantize(a *Tensor) (*Tensor, error) {
+	if a.dtype != GGML_TYPE_Q8_0 {
+		return nil, fmt.Errorf("Tensor dtype must be Q8_0")
+	}
+	col := a.GetDim(-1)
+	row := a.Len() / col
+	out := C.cuda_malloc(C.size_t(a.Len() * 4))
+	C.cuda_dequantize(out, a.dptr, C.int(row), C.int(col), C.int(a.dtype))
+	ret := NewTensor(a.Shape, GGML_TYPE_F32)
+	ret.dptr = out
+	return ret, nil
 }
 
 func (r *cudaRunner) ToHost(a *Tensor) any {
@@ -426,7 +443,7 @@ func (r *cudaRunner) Matmul(a, b, bias *Tensor) (*Tensor, error) {
 	row := a.Len() / column
 	oc := b.GetDim(-2)
 	out := C.cuda_malloc(C.size_t(row * oc * a.ElemTypeSize() / a.ElemBlockSize()))
-	C.cuda_matmul(out, a.dptr, b.dptr, biasPtr, C.int(row), C.int(column), C.int(oc))
+	C.cuda_matmul(out, a.dptr, b.dptr, biasPtr, C.int(row), C.int(column), C.int(oc), C.int(b.dtype))
 	shape := a.Shape
 	shape[len(shape)-1] = oc
 	ret := NewTensor(shape, a.dtype)
@@ -450,8 +467,8 @@ func (r *cudaRunner) Embedding(embd, ids *Tensor) (*Tensor, error) {
 	if ids.NumDims() == 2 {
 		batch = ids.GetDim(0)
 	}
-	out := C.cuda_malloc(C.size_t(batch * row * col * embd.ElemTypeSize() / embd.ElemBlockSize()))
-	C.cuda_embedding(out, ids.dptr, embd.dptr, C.int(batch), C.int(row), C.int(col))
+	out := C.cuda_malloc(C.size_t(batch * row * col * int(unsafe.Sizeof(float32(0)))))
+	C.cuda_embedding(out, ids.dptr, embd.dptr, C.int(batch), C.int(row), C.int(col), C.int(embd.dtype))
 	ret := NewTensor(Shape{batch, row, col}, embd.dtype)
 	ret.dptr = out
 	return ret, nil
