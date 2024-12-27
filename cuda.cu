@@ -54,6 +54,7 @@ __attribute_maybe_unused__ static int cuda_num_SMs = 0; // for persistent thread
 __attribute_maybe_unused__ static int cuda_threads_per_SM = 0;    // needed to calculate how many blocks to launch to fill up the GPU
 __attribute_maybe_unused__ static int cuda_threads_per_block = 0;
 __attribute_maybe_unused__ static int cuda_warp_size = 0; // warp size of the GPU
+__attribute_maybe_unused__ static int cuda_max_shared_mem_per_block = 0;
 
 __device__ float warpReduceSum(float val) {
     for (int offset = 16; offset > 0; offset /= 2) {
@@ -587,6 +588,7 @@ void cuda_init(void)
     cuda_arch_minor = deviceProp.minor;
     cuda_threads_per_block = deviceProp.maxThreadsPerBlock;
     cuda_warp_size = deviceProp.warpSize;
+    cuda_max_shared_mem_per_block = deviceProp.sharedMemPerBlock;
     // printf("CUDA device: %s, major %d, minor %d, num_SMs: %d, threads_per_SM: %d, threads_per_block: %d, warp_size: %d\n",
     //        deviceProp.name, cuda_arch_major, cuda_arch_minor, cuda_num_SMs, cuda_threads_per_SM, cuda_threads_per_block, cuda_warp_size);
 
@@ -919,12 +921,13 @@ void cuda_dequantize(void *out, const void *inp, int row, int col, int type)
     int block_size = 256;
     int num_blocks = CEIL_DIV(total_blocks, block_size);
     size_t shared_mem_size = block_size * sizeof(block_q8_0);
+    assert(shared_mem_size <= cuda_max_shared_mem_per_block);
     switch (type) {
     case GGML_TYPE_Q8_0:
-            dequantize_Q8_0<<<num_blocks, block_size, shared_mem_size>>>((float *)out, (const block_q8_0 *)inp, row, nb, bs);
-            break;
-        default:
-            panic("Unsupported quantization type: %s", dtype_infos[type].name);
+	    dequantize_Q8_0<<<num_blocks, block_size, shared_mem_size>>>((float *)out, (const block_q8_0 *)inp, row, nb, bs);
+	    break;
+    default:
+	    panic("Unsupported quantization type: %s", dtype_infos[type].name);
 	}
     cuda_check(cudaGetLastError());
 }
