@@ -67,8 +67,8 @@ type DTypeSize struct {
 	typeSize  int
 }
 
-// DTypeInfo maps DType to quantization information {name, blockSize, typeSize}
-var DTypeInfo = map[DType]DTypeSize{
+// DTypeInfo maps DType index to quantization information {name, blockSize, typeSize}
+var DTypeInfo = [GGML_TYPE_COUNT]DTypeSize{
 	GGML_TYPE_F32:      {"F32", 1, 4},
 	GGML_TYPE_F16:      {"F16", 1, 2},
 	GGML_TYPE_Q4_0:     {"GGML_TYPE_Q4_0", 32, 2 + 16},
@@ -108,10 +108,7 @@ var DTypeInfo = map[DType]DTypeSize{
 }
 
 func (t DType) String() string {
-	if info, ok := DTypeInfo[t]; ok {
-		return info.name
-	}
-	return fmt.Sprintf("GGML_TYPE_UNKNOWN(%d)", t)
+	return DTypeInfo[t].name
 }
 
 type Shape []int
@@ -226,10 +223,10 @@ func MakeTensorFrom(s Shape, p unsafe.Pointer, t DType) (*Tensor, error) {
 	if p == nil {
 		return nil, fmt.Errorf("bad pointer: %v", p)
 	}
-	info, ok := DTypeInfo[t]
-	if !ok {
+	if t >= GGML_TYPE_COUNT {
 		return nil, fmt.Errorf("bad dtype: %v", t)
 	}
+	info := DTypeInfo[t]
 	if s.GetDim(-1)%info.blockSize != 0 {
 		return nil, fmt.Errorf("shape %v is not aligned to %d", s, info.blockSize)
 	}
@@ -298,7 +295,7 @@ func (t *Tensor) Format(st fmt.State, r rune) {
 }
 
 // Returns a slice of random float32 numbers of a certain size
-func RandFloatSlice(size int) any {
+func randFloatSlice(size int) any {
 	slice := make([]float32, size)
 	for i := 0; i < size; i++ {
 		slice[i] = rand.Float32()
@@ -314,31 +311,20 @@ func (a *Tensor) ElemType() DType { return a.dtype }
 
 // Returns the element size of the Tensor in bytes
 func (a *Tensor) ElemBlockSize() int {
-	if info, ok := DTypeInfo[a.dtype]; ok {
-		return info.blockSize
-	}
-	panic(fmt.Sprintf("Bad dtype: %d", a.dtype))
+	return DTypeInfo[a.dtype].blockSize
 }
 
 func (a *Tensor) ElemTypeSize() int {
-	if info, ok := DTypeInfo[a.dtype]; ok {
-		return info.typeSize
-	}
-	panic(fmt.Sprintf("Bad dtype: %d", a.dtype))
+	return DTypeInfo[a.dtype].typeSize
 }
 
 // Returns the total size of the Tensor in bytes
 func (a *Tensor) Size() int {
-	info, ok := DTypeInfo[a.dtype]
-	if !ok {
-		panic(fmt.Sprintf("Bad dtype: %d", a.dtype))
-	}
-
+	info := DTypeInfo[a.dtype]
 	s := a.Shape
 	if s.GetDim(-1)%info.blockSize != 0 {
 		panic(fmt.Errorf("Shape %v is not aligned to %d", s, info.blockSize))
 	}
-
 	return a.Len() / info.blockSize * info.typeSize
 }
 

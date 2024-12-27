@@ -539,7 +539,8 @@ __global__ void cat_kernel(floatX *out, const floatX *a, const floatX *b, int ar
     }
 }
 
-__global__ void div_kernel(floatX *out, const floatX *a, const floatX *b, int row, int col) {
+__global__ void div_kernel(floatX *out, const floatX *a, const floatX *b, int row, int col)
+{
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
     int total_elements = row * col;
 
@@ -548,7 +549,8 @@ __global__ void div_kernel(floatX *out, const floatX *a, const floatX *b, int ro
     }
 }
 
-__global__ void dequantize_Q8_0(float *out, const block_q8_0 *inp, int row, int nb, int bs) {
+__global__ void dequantize_Q8_0(float *out, const block_q8_0 *inp, int row, int nb, int bs)
+{
     int block_idx = blockIdx.x * blockDim.x + threadIdx.x;
     int total_blocks = row * nb;
 

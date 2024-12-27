@@ -140,8 +140,8 @@ func TestMakeTensor(t *testing.T) {
 		data  any
 		valid bool
 	}{
-		{Shape{4, 2, 2}, RandFloatSlice(16), true},
-		{Shape{2, 3}, RandFloatSlice(6), true},
+		{Shape{4, 2, 2}, randFloatSlice(16), true},
+		{Shape{2, 3}, randFloatSlice(6), true},
 		{Shape{2, 2}, []int{1, 2, 3}, false},
 		{Shape{}, nil, false},
 		{Shape{}, []int{1, 2, 3}, false},
