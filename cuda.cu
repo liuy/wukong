@@ -549,6 +549,7 @@ __global__ void div_kernel(floatX *out, const floatX *a, const floatX *b, int ro
 
 __global__ void dequantize_Q8_0(float *out, const block_q8_0 *inp, int row, int nb, int bs)
 {
+    extern __shared__ block_q8_0 shared_block[];
     int block_idx = blockIdx.x * blockDim.x + threadIdx.x;
     int total_blocks = row * nb;
 
@@ -559,11 +560,14 @@ __global__ void dequantize_Q8_0(float *out, const block_q8_0 *inp, int row, int 
     int b = block_idx % nb; // block index
 
     const block_q8_0 *block = inp + r * nb + b;
-    float scale = __half2float(block->scale);
+    shared_block[threadIdx.x] = *block;
+    __syncthreads();
+
+    float scale = __half2float(shared_block[threadIdx.x].scale);
 #pragma unroll
     for (int i = 0; i < bs; ++i) {
 	    int out_idx = r * nb * bs + b * bs + i;
-	    out[out_idx] = scale * block->d[i];
+	    out[out_idx] = scale * shared_block[threadIdx.x].d[i];
     }
 }
 
@@ -914,9 +918,10 @@ void cuda_dequantize(void *out, const void *inp, int row, int col, int type)
     int total_blocks = row * nb;
     int block_size = 256;
     int num_blocks = CEIL_DIV(total_blocks, block_size);
+    size_t shared_mem_size = block_size * sizeof(block_q8_0);
     switch (type) {
     case GGML_TYPE_Q8_0:
-            dequantize_Q8_0<<<num_blocks, block_size>>>((float *)out, (const block_q8_0 *)inp, row, nb, bs);
+            dequantize_Q8_0<<<num_blocks, block_size, shared_mem_size>>>((float *)out, (const block_q8_0 *)inp, row, nb, bs);
             break;
         default:
             panic("Unsupported quantization type: %s", dtype_infos[type].name);
