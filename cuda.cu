@@ -431,22 +431,20 @@ __global__ void rope_kernel(floatX *out, const floatX *inp, const floatX *raw_fr
     out[idxi + 1] = x_real * freqs_sin + x_imag * freqs_cos;
 }
 
-__global__ void get_embeddings_kernel(floatX* out, const int* inp, const floatX* wte, int B, int T, int C)
+__global__ void get_embeddings_kernel(void* out, const int* inp, const void* embd, int batch, int row, size_t bytes_per_row)
 {
-    int idx = (blockIdx.x * blockDim.x + threadIdx.x) * x128::size;
-    int N = B * T * C;
-    if (idx >= N) {
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if (idx >= batch * row)
         return;
-    }
-    int bt = idx / C;
-    int b = bt / T;
-    int t = bt % T;
-    int c = idx % C;
-    int ix = inp[b * T + t];
-    floatX* out_btc = out + b * T * C + t * C + c;
-    const floatX* wte_ix = wte + ix * C + c;
-    x128 wte128 = load128cs(wte_ix);
-    store128(out_btc, wte128);
+
+    int b = idx / row;
+    int t = idx % row;
+    int ix = inp[b * row + t];
+
+    char* dst = (char*)out + (b * row + t) * bytes_per_row;
+    const char* src = (const char*)embd + ix * bytes_per_row;
+
+    memcpy(dst, src, bytes_per_row);
 }
 
 void cuda_matmul_cublas(float *out, const float *inp, const float *weight, const float *bias,
@@ -836,24 +834,27 @@ void cuda_rope(void *out, const void *inp, const void *raw_freqs, int batch, int
  */
 void cuda_embedding(void* out, const void *inp, const void *embd, int batch, int row, int col, int dtype)
 {
+    if (dtype < 0 || dtype >= GGML_TYPE_COUNT)
+        panic("Unsupported quantization type: %d", dtype);
+
+    auto info = dtype_infos[dtype];
+    assert(col % info.block_size == 0);
+    size_t bytes_per_row = col / info.block_size * info.type_size;
+
     const int block_size = 256;
-    const int N = batch * row * col;
-    const int grid_size = CEIL_DIV(N, (block_size * x128::size));
+    const int N = batch * row;  // One thread per row
+    const int grid_size = CEIL_DIV(N, block_size);
+
     if (dtype == GGML_TYPE_F32) {
-        assert(col % x128::size == 0); // make sure col is multiple of 128-bit
-        get_embeddings_kernel << <grid_size, block_size >> > ((floatX*)out, (const int*)inp, (const floatX*)embd, batch, row, col);
+        get_embeddings_kernel<<<grid_size, block_size>>>(out, (const int*)inp, embd, batch, row, bytes_per_row);
         cuda_check(cudaGetLastError());
         return;
     }
-    auto info = dtype_infos[dtype];
-    assert(col % (info.block_size * x128::size) == 0);
-    int c = col / info.block_size * info.type_size;
-    void* qout = cuda_malloc(batch * row * c * sizeof(int));
-    get_embeddings_kernel << <grid_size, block_size >> > ((floatX*)qout, (const int*)inp, (const floatX*)embd, batch, row, c);
-    cuda_dequantize(out, qout, row, col, dtype);
+    void *dout = cuda_malloc(batch * row * bytes_per_row);
+    get_embeddings_kernel<<<grid_size, block_size>>>(dout, (const int*)inp, embd, batch, row, bytes_per_row);
+    cuda_dequantize(out, dout, batch * row, col, dtype);
     cuda_check(cudaGetLastError());
-    cuda_free(qout);
-    return;
+    cuda_free(dout);
 }
 
 /*

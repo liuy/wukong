@@ -469,7 +469,7 @@ func (r *cudaRunner) Embedding(embd, ids *Tensor) (*Tensor, error) {
 	}
 	out := C.cuda_malloc(C.size_t(batch * row * col * int(unsafe.Sizeof(float32(0)))))
 	C.cuda_embedding(out, ids.dptr, embd.dptr, C.int(batch), C.int(row), C.int(col), C.int(embd.dtype))
-	ret := NewTensor(Shape{batch, row, col}, embd.dtype)
+	ret := NewTensor(Shape{batch, row, col}, GGML_TYPE_F32)
 	ret.dptr = out
 	return ret, nil
 }

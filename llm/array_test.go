@@ -3,6 +3,7 @@ package llm
 import (
 	"fmt"
 	"math"
+	"math/rand"
 	"reflect"
 	"runtime"
 	"testing"
@@ -345,6 +346,26 @@ func TestTensorEmbedding(t *testing.T) {
 		}
 		assert.SliceNear(t, tt.expected, result.ToHost().([]float32), 1e-6)
 	}
+
+	row := 4
+	col := 32
+	e := NewTensor(Shape{row, col}, GGML_TYPE_Q8_0)
+	data := []uint8{
+		8, 52, 4, 8, 12, 16, 20, 24, 28, 32, 36, 40, 44, 48, 52, 56, 60, 64, 67, 71, 75, 79, 83, 87, 91, 95, 99, 103, 107, 111, 115, 119, 123, 127,
+		0, 25, 0, 252, 8, 244, 16, 236, 25, 227, 33, 219, 41, 211, 49, 203, 57, 195, 66, 186, 74, 178, 82, 170, 90, 162, 98, 154, 107, 145, 115, 137, 123, 129,
+		8, 52, 4, 8, 12, 16, 20, 24, 28, 32, 36, 40, 44, 48, 52, 56, 60, 64, 67, 71, 75, 79, 83, 87, 91, 95, 99, 103, 107, 111, 115, 119, 123, 127,
+		0, 25, 0, 252, 8, 244, 16, 236, 25, 227, 33, 219, 41, 211, 49, 203, 57, 195, 66, 186, 74, 178, 82, 170, 90, 162, 98, 154, 107, 145, 115, 137, 123, 129,
+	}
+	e.ToDevice(unsafe.Pointer(&data[0]))
+	ids, err := MakeTensor(Shape{2}, []int32{2, 1})
+	assert.NoErr(t, err)
+	r, err := e.Embedding(ids)
+	assert.NoErr(t, err)
+	expected := []float32{
+		1.0078125, 2.015625, 3.0234375, 4.03125, 5.0390625, 6.046875, 7.0546875, 8.0625, 9.0703125, 10.078125, 11.0859375, 12.09375, 13.1015625, 14.109375, 15.1171875, 16.125, 16.88086, 17.888672, 18.896484, 19.904297, 20.91211, 21.919922, 22.927734, 23.935547, 24.94336, 25.951172, 26.958984, 27.966797, 28.97461, 29.982422, 30.990234, 31.998047,
+		0, -0.009765625, 0.01953125, -0.029296875, 0.0390625, -0.048828125, 0.061035156, -0.07080078, 0.080566406, -0.09033203, 0.100097656, -0.10986328, 0.119628906, -0.12939453, 0.13916016, -0.14892578, 0.16113281, -0.17089844, 0.18066406, -0.19042969, 0.20019531, -0.20996094, 0.21972656, -0.22949219, 0.23925781, -0.24902344, 0.26123047, -0.2709961, 0.28076172, -0.29052734, 0.30029297, -0.3100586,
+	}
+	assert.SliceNear(t, expected, r.ToHost().([]float32), 1e-6)
 }
 
 func TestMakeTensorFrom(t *testing.T) {
@@ -689,4 +710,22 @@ func TestTensorDequantize(t *testing.T) {
 		assert.NoErr(t, err)
 		assert.SliceNear(t, tt.expected, d.ToHost().([]float32), 1e-6)
 	}
+}
+
+func BenchmarkTensor(b *testing.B) {
+	row := 128256
+	col := 8192
+	t := NewTensor(Shape{row, col}, GGML_TYPE_Q8_0)
+	info := DTypeInfo[GGML_TYPE_Q8_0]
+	data := make([]uint8, row*col/info.blockSize*info.typeSize)
+	r := rand.New(rand.NewSource(0))
+	r.Read(data)
+	t.ToDevice(unsafe.Pointer(&data[0]))
+	b.Run("Dequantize", func(b *testing.B) {
+		for i := 0; i < b.N; i++ {
+			a, err := t.Dequantize()
+			assert.NoErr(b, err)
+			a.DeviceFree()
+		}
+	})
 }
