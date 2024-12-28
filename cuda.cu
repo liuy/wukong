@@ -402,6 +402,35 @@ __global__ void swiglu_kernel(floatX* out, const floatX* inp, int B, int T, int 
     }
 }
 
+__global__ void rope_qkv_kernel(floatX* out, const floatX* inp, const floatX* raw_freqs,
+                                int batch, int row, int NH, int kvNH, int HS)
+{
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    int HS_half = HS / 2;
+    int total_heads = NH + kvNH;
+    int total = batch * row * total_heads * HS_half;
+
+    if (idx >= total)
+        return;
+
+    int b = idx / (row * total_heads * HS_half);
+    int r = (idx / (total_heads * HS_half)) % row;
+    int h = (idx / HS_half) % total_heads;
+    int d = idx % HS_half;
+
+    float freq = raw_freqs[d];
+    float angle = r * freq;
+    float c = cosf(angle);
+    float s = sinf(angle);
+
+    int base = b * (row * (NH + 2 * kvNH) * HS) + r * ((NH + 2 * kvNH) * HS) + h * HS + 2 * d;
+    float x_real = inp[base];
+    float x_imag = inp[base + 1];
+
+    out[base]     = x_real * c - x_imag * s;
+    out[base + 1] = x_real * s + x_imag * c;
+}
+
 __global__ void rope_kernel(floatX *out, const floatX *inp, const floatX *raw_freqs, int B, int T, int NH, int HS)
 {
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
@@ -806,6 +835,29 @@ void cuda_mha_attention(void *out, const void *inp, int batch, int row, int NH, 
 void cuda_mqa_attention(void *out, const void *inp, int batch, int row, int qNH, int HS)
 {
     return cuda_gqa_attention(out, inp, batch, row, qNH, 1, HS); // kvNH = 1
+}
+
+/*
+ * RoPE: Rotated Positional Embedding
+ *
+ * @param out: output matrix(batch, row, NH + 2*kvNH, HS) where NH is for Q and kvNH each for K,V
+ * @param inp: input matrix(batch, row, NH + 2*kvNH, HS) q, k, v concatenated along the last dimension
+ * @freqs_cis: cos and sin frequencies for each element in q, k
+ * @param batch: batch size
+ * @param row: row size
+ * @param NH: number of query heads
+ * @param kvNH: number of key/value heads
+ * @param HS: head size
+ */
+void cuda_rope_qkv(void *out, const void *inp, const void *raw_freqs, int batch, int row, int NH, int kvNH, int HS)
+{
+    int block_size = 256;
+    // We only need threads for Q and K sections, V will be untouched
+    int total_threads = batch * row * (NH + kvNH) * HS / 2;
+    int num_blocks = CEIL_DIV(total_threads, block_size);
+    rope_qkv_kernel<<<num_blocks, block_size>>>((floatX *)out, (const floatX *)inp, (const floatX *)raw_freqs,
+                                               batch, row, NH, kvNH, HS);
+    cuda_check(cudaGetLastError());
 }
 
 /*

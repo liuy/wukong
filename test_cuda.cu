@@ -423,6 +423,86 @@ void get_freqs_cis(floatX *freqs_cis, int dim, int end, float theta, int use_sca
     }
 }
 
+TEST(Cuda, cuda_rope_qkv)
+{
+    int batch = 1;
+    int row = 2;
+    int NH = 2;
+    int kvNH = 1;
+    int HS = 2;
+
+    float qkv[batch * row * (NH + 2*kvNH) * HS] = {
+        // row 0
+        0.1f, 0.2f, 0.3f, 0.4f, // q
+        0.5f, 0.6f, 0.7f, 0.8f, // k,v
+        // row 1
+        1.3f, 1.4f, 1.5f, 1.6f, // q
+        1.7f, 1.8f, 1.9f, 2.0f, // k,v
+    };
+    float fc[HS/2] = {0};
+    float fc_res[HS/2] = {
+        1.000000f,
+    };
+    float out[batch * row * (NH + 2*kvNH) * HS] = {0};
+    float res[batch * row * (NH + 2*kvNH) * HS] = {
+        0.100000f, 0.200000f, 0.300000f, 0.400000f,
+        0.500000f, 0.600000f, 0.700000f, 0.800000f,
+        -0.475666f, 1.850335f, -0.535900f, 2.126690f,
+        -0.596134f, 2.403045f, 1.900000f, 2.000000f
+    };
+
+    get_freqs(fc, HS, 10000.0f);
+    assert_array_eq(fc_res, fc, HS / 2);
+
+    void *d_qkv = cuda_malloc(batch * row * 3 * NH * HS * sizeof(float));
+    void *d_fc = cuda_malloc(HS / 2 * sizeof(float));
+
+    cuda_to_device(d_qkv, qkv, batch * row * (NH + 2*kvNH) * HS * sizeof(float));
+    cuda_to_device(d_fc, fc, HS / 2 * sizeof(float));
+    cuda_rope_qkv(d_qkv, d_qkv, d_fc, batch, row, NH, kvNH, HS); // update qkv in-place
+    cuda_to_host(out, d_qkv, batch * row * (NH + 2*kvNH) * HS * sizeof(float));
+    assert_array_eq(res, out, batch * row * (NH + 2*kvNH) * HS);
+
+    cuda_free(d_qkv);
+    cuda_free(d_fc);
+
+    NH = 1;
+    HS = 4;
+    float qkv2[batch * row * 3 * NH * HS] = {
+        // row 0
+        0.1f, 0.2f, 0.3f, 0.4f, // q
+        0.5f, 0.6f, 0.7f, 0.8f, // k
+        0.9f, 1.0f, 1.1f, 1.2f, // v
+        // row 1
+        1.3f, 1.4f, 1.5f, 1.6f, // q
+        1.7f, 1.8f, 1.9f, 2.0f, // k
+        2.1f, 2.2f, 2.3f, 2.4f, // v
+    };
+    float fc_res2[HS/2] = {
+        1.000000f, 0.010000f,
+    };
+    float res2[batch * row * 3 * NH * HS] = {
+        0.100000f, 0.200000f, 0.300000f, 0.400000f,
+        0.500000f, 0.600000f, 0.700000f, 0.800000f,
+        0.900000f, 1.000000f, 1.100000f, 1.200000f,
+        -0.475666f, 1.850335f, 1.483925f, 1.614920f,
+        -0.596134f, 2.403045f, 1.879905f, 2.018900f,
+        2.100000f, 2.200000f, 2.300000f, 2.400000f
+    };
+    get_freqs(fc, HS, 10000.0f);
+    assert_array_eq(fc_res2, fc, HS / 2);
+    d_qkv = cuda_malloc(batch * row * 3 * NH * HS * sizeof(float));
+    d_fc = cuda_malloc(HS / 2 * sizeof(float));
+    cuda_to_device(d_qkv, qkv2, batch * row * 3 * NH * HS * sizeof(float));
+    cuda_to_device(d_fc, fc, HS / 2 * sizeof(float));
+    cuda_rope_qkv(d_qkv, d_qkv, d_fc, batch, row, NH, kvNH, HS); // update qkv in-place
+    cuda_to_host(out, d_qkv, batch * row * 3 * NH * HS * sizeof(float));
+    assert_array_eq(res2, out, batch * row * 3 * NH * HS);
+
+    cuda_free(d_qkv);
+    cuda_free(d_fc);
+}
+
 TEST(Cuda, cuda_rope)
 {
     int batch = 2;
