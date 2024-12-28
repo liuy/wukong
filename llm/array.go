@@ -277,6 +277,27 @@ func MakeTensor(s Shape, data any) (ret *Tensor, e error) {
 	return ret, nil
 }
 
+func MakeTensorOnes(s Shape) *Tensor {
+	size := s.Len()
+	ones := make([]float32, size)
+	for i := range ones {
+		ones[i] = 1.0
+	}
+	r, _ := MakeTensor(s, ones)
+	return r
+}
+
+func MakeTensorIdentity(d int) *Tensor {
+	data := make([]float32, d*d)
+
+	for i := 0; i < d; i++ {
+		data[i*d+i] = 1.0
+	}
+
+	r, _ := MakeTensor(Shape{d, d}, data)
+	return r
+}
+
 func (t *Tensor) Format(st fmt.State, r rune) {
 	s := fmt.Sprintf("Shape: %v\nType: %v", t.Shape, t.ElemType())
 	data := "\nData:\n"

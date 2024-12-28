@@ -637,7 +637,7 @@ void cuda_to_host(void* dst, void* src, size_t size)
  *
  * @param out: output matrix(row, oc)
  * @param inp: input matrix(row, column)
- * @param weight: weight matrix(column, oc)
+ * @param weight: weight matrix(oc, column)
  * @param bias: optional bias vector(oc) (can be NULL)
  * @param row: input row size
  * @param column: input column size
@@ -647,10 +647,10 @@ void cuda_matmul(void *out, const void *inp, const void *weight, const void *bia
                 int row, int column, int oc, int dtype)
 {
     if (dtype != GGML_TYPE_F32) {
-        void *dinp = cuda_malloc(row * column * sizeof(float));
-        cuda_dequantize(dinp, inp, row, column, dtype);
-        cuda_matmul_cublaslt(out, dinp, weight, bias, row, column, oc);
-        cuda_free(dinp);
+        void *dw = cuda_malloc(oc * column * sizeof(float));
+        cuda_dequantize(dw, weight, oc, column, dtype);
+        cuda_matmul_cublaslt(out, inp, dw, bias, row, column, oc);
+        cuda_free(dw);
         return;
     }
     return cuda_matmul_cublaslt(out, inp, weight, bias, row, column, oc);
