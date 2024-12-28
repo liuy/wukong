@@ -568,6 +568,28 @@ __global__ void dequantize_Q8_0(float *out, const block_q8_0 *inp, int row, int 
     }
 }
 
+__global__ void add_kernel(float* out, const float* a, const float* b, int row, int col)
+{
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    int size = row * col;
+
+    if (idx >= size)
+        return;
+
+    float4 *out4 = (float4 *)out;
+    const float4 *a4 = (const float4 *)a;
+    const float4 *b4 = (const float4 *)b;
+
+    float4 va = a4[idx];
+    float4 vb = b4[idx];
+    float4 vout;
+    vout.x = va.x + vb.x;
+    vout.y = va.y + vb.y;
+    vout.z = va.z + vb.z;
+    vout.w = va.w + vb.w;
+    out4[idx] = vout;
+}
+
 extern "C" {
 void cuda_init(void)
 {
@@ -668,7 +690,8 @@ void cuda_softmax(void* output, void* input, int row, int col)
 }
 
 /*
- * GQA attention
+ * GQA scaled dot product attention
+ *
  * @param out: output matrix(batch, row, col) where col = qNH * HS
  * @param inp: input matrix(batch, row, (qNH + 2 * kvNH) * HS) (Q, K, V) concatenated along the last dimension
  * @param batch: batch size
@@ -677,7 +700,7 @@ void cuda_softmax(void* output, void* input, int row, int col)
  * @param kvNH: number of K and V heads
  * @param HS: head size
  */
-void cuda_gqa_attention(void *out, const void *inp, int batch, int row, int qNH, int kvNH, int HS)
+void cuda_gq_sdpa(void *out, const void *inp, int batch, int row, int qNH, int kvNH, int HS)
 {
     float *workspace, *qkv, *att;
 
@@ -750,11 +773,19 @@ void cuda_gqa_attention(void *out, const void *inp, int batch, int row, int qNH,
     cuda_check(cudaFree(att));
 }
 
-// Root Mean Square Layer Normalization: x / sqrt(mean(x^2) + eps) * weight
-void cuda_rmsnorm(void* out, const void* inp, const void* weight, int N, int col, float eps)
+/* Root Mean Square Layer Normalization: x / sqrt(mean(x^2) + eps) * weight
+ *
+ * @param out: output matrix(row, col)
+ * @param inp: input matrix(row, col)
+ * @param weight: weight matrix(col)
+ * @param row: row size
+ * @param col: column size
+ * @param eps: epsilon value
+ */
+void cuda_rmsnorm(void *out, const void *inp, const void *weight, int row, int col, float eps)
 {
     const int block_size = 256;
-    rmsnorm_kernel<<<N, block_size>>>((floatX *)out, (const floatX *)inp, (const floatX *)weight, N, col, eps);
+    rmsnorm_kernel<<<row, block_size>>>((floatX *)out, (const floatX *)inp, (const floatX *)weight, row, col, eps);
     cuda_check(cudaGetLastError());
 }
 
@@ -770,7 +801,7 @@ void cuda_swiglu(void *out, const void *inp, int batch, int row, int col)
 }
 
 /*
- * Vanilla multi-head attention implementation
+ * Vanilla multi-head scaled dot product attention
  *
  * attention = softmax(Q@K^T/sqrt(HS)) @ V
  *
@@ -782,13 +813,14 @@ void cuda_swiglu(void *out, const void *inp, int batch, int row, int col)
  * @param HS: head size
  * @attention col = NH * HS
  */
-void cuda_mha_attention(void *out, const void *inp, int batch, int row, int NH, int HS)
+void cuda_mh_sdpa(void *out, const void *inp, int batch, int row, int NH, int HS)
 {
-    return cuda_gqa_attention(out, inp, batch, row, NH, NH, HS); // qNH = kvNH
+    return cuda_gq_sdpa(out, inp, batch, row, NH, NH, HS); // qNH = kvNH
 }
 
 /*
- * MQA attention
+ * Multi query scaled dot product attention
+ *
  * @param out: output matrix(batch, row, col) where col = qNH * HS
  * @param inp: input matrix(batch, row, (qNH + 2 * kvNH) * HS) (Q, K, V) concatenated along the last dimension
  * @param batch: batch size
@@ -796,9 +828,9 @@ void cuda_mha_attention(void *out, const void *inp, int batch, int row, int NH, 
  * @param qNH: number of Q heads
  * @param HS: head size
  */
-void cuda_mqa_attention(void *out, const void *inp, int batch, int row, int qNH, int HS)
+void cuda_mq_sdpa(void *out, const void *inp, int batch, int row, int qNH, int HS)
 {
-    return cuda_gqa_attention(out, inp, batch, row, qNH, 1, HS); // kvNH = 1
+    return cuda_gq_sdpa(out, inp, batch, row, qNH, 1, HS); // kvNH = 1
 }
 
 /*
@@ -946,6 +978,47 @@ void cuda_dequantize(void *out, const void *inp, int row, int col, int type)
 	    panic("Unsupported quantization type: %s", dtype_infos[type].name);
 	}
     cuda_check(cudaGetLastError());
+}
+
+/*
+ * Element-wise addition out = a + b
+ *
+ * @param out: output matrix(row, col)
+ * @param a: input matrix(row, col)
+ * @param b: input matrix(row, col)
+ * @param row: row size
+ * @param col: column size
+ */
+void cuda_add(void* out, const void* a, const void* b, int row, int col)
+{
+    const int total_size = row * col;
+    const int block_size = 256;
+    // Each thread handles 4 elements when using float4
+    const int grid_size = CEIL_DIV(total_size, block_size * 4);
+
+    assert(col % 4 == 0);
+    add_kernel<<<grid_size, block_size>>>((float*)out, (const float*)a, (const float*)b, row, col);
+    cuda_check(cudaGetLastError());
+}
+
+void cuda_group_query_attention(void *out, const void *embeds, const void *freqs, const void *out_weight, const void *norm_weight,
+                                const void *qkv_weight, int batch, int row, int NH, int kvNH, int HS, float eps, int dtype)
+{
+    void *qkv, *att;
+    int col = NH * HS;
+    int qkv_weight_row = (NH + 2 * kvNH) * HS;
+    att = cuda_malloc(batch * row * col * sizeof(float));
+    qkv = cuda_malloc(batch * row * qkv_weight_row * sizeof(float));
+
+    cuda_rmsnorm(att, embeds, norm_weight, batch * row, col, eps);
+    cuda_matmul(qkv, att, qkv_weight, nullptr, batch * row, col, qkv_weight_row, dtype); // (batch * row, col) @ (qkv_weight_row, col)^T
+    cuda_rope_qkv(qkv, qkv, freqs, batch, row, NH, kvNH, HS); // rope qkv in-place
+    cuda_gq_sdpa(att, qkv, batch, row, NH, kvNH, HS);
+    cuda_matmul(att, att, out_weight, nullptr, batch * row, col, col, dtype); // (batch * row, col) @ (col, col)^T
+    cuda_add(out, embeds, att, batch * row, col); // residual connect embeddings to attention
+
+    cuda_free(qkv);
+    cuda_free(att);
 }
 
 } // extern "C"
