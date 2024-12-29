@@ -231,7 +231,7 @@ __global__ void softmax_kernel(float* output, const float* input, int row, int c
     }
 }
 
-__global__ void gqa_unpermute_kernel(const float* inp, float *out, int B, int N, int NH, int d)
+__global__ void unpermute_kernel(float *out, const float * inp, int B, int N, int NH, int d)
 {
    // out has shape (B, nh, N, d) but we need to unpermute it to (B, N, nh, d)
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
@@ -250,45 +250,27 @@ __global__ void gqa_unpermute_kernel(const float* inp, float *out, int B, int N,
     }
 }
 
-__global__ void gqa_permute_kernel(float* q, float* k, float* v, const float* inp,
-                                    int B, int N, int qNH, int kvNH, int HS)
-{
-    // Calculate total elements to process
-    const int total_elements = B * qNH * N * HS;
-
-    // Use grid-stride loop to handle multiple elements per thread
-    for (int idx = blockIdx.x * blockDim.x + threadIdx.x;
-         idx < total_elements;
-         idx += blockDim.x * gridDim.x) {
-
-        const int b = idx / (qNH * N * HS);
-        int remainder = idx % (qNH * N * HS);
-        const int qh = remainder / (N * HS);
-        remainder = remainder % (N * HS);
-        const int n = remainder / HS;
-        const int hs = remainder % HS;
-
-        // Calculate KV head index once
-        const int kh = qh % kvNH;
-
-        // Calculate base offset for input
-        const int inp_base = (b * N * (qNH + 2 * kvNH) * HS) +
-                            (n * (qNH + 2 * kvNH) * HS);
-
-        // Calculate output index once
-        const int out_idx = idx;  // idx is already in the correct format
-
-        // Handle Q
-        const int q_inp_idx = inp_base + (qh * HS) + hs;
-        q[out_idx] = inp[q_inp_idx];
-
-        // Handle K and V using the same output index but different input offsets
-        const int k_inp_idx = inp_base + (qNH * HS) + (kh * HS) + hs;
-        const int v_inp_idx = k_inp_idx + (kvNH * HS);
-
-        k[out_idx] = inp[k_inp_idx];
-        v[out_idx] = inp[v_inp_idx];
+__global__ void permute_kernel(floatX* q, floatX* k, floatX* v,
+                               const floatX* inp,
+                               int B, int N, int NH, int d) {
+    // okay so now, this kernel wants Q,K,V to all be of shape (B, NH, N, d)
+    // but instead, we have a single tensor QKV (inp) of shape (B, N, 3, NH, d)
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if (idx >= B * NH * N * d) {
+        return;
     }
+
+    // Q[b][nh_][n][d_] = inp[b][n][0][nh_][d_]
+    int b = idx / (NH * N * d);
+    int rest = idx % (NH * N * d);
+    int nh_ = rest / (N * d);
+    rest = rest % (N * d);
+    int n = rest / d;
+    int d_ = rest % d;
+    int inp_idx = (b * N * 3 * NH * d) + (n * 3 * NH * d) + (0 * NH * d) + (nh_ * d) + d_;
+    q[idx] = __ldcs(&inp[inp_idx]);
+    k[idx] = __ldcs(&inp[inp_idx + NH * d]);
+    v[idx] = __ldcs(&inp[inp_idx + 2 * (NH * d)]);
 }
 
 __global__ void add_bias_kernel(float* out, const float* bias, int T, int OC)
@@ -738,75 +720,10 @@ void cuda_softmax(void* output, void* input, int row, int col)
  */
 void cuda_gq_sdpa(void *out, const void *inp, int batch, int row, int qNH, int kvNH, int HS)
 {
-    float *workspace, *qkv, *att;
-
-    // Allocate space for broadcasted K and V
-    size_t workspace_size = batch * qNH * row * HS * sizeof(float);
-    size_t qkv_size = (batch * qNH * row * HS * 3) * sizeof(float); // Now K and V are expanded to match Q size
-    size_t att_size = batch * qNH * row * row * sizeof(float);
-
-    cuda_check(cudaMalloc(&workspace, workspace_size));
-    cuda_check(cudaMalloc(&qkv, qkv_size));
-    cuda_check(cudaMalloc(&att, att_size));
-
-    float *q = qkv;
-    float *k = qkv + batch * qNH * row * HS;
-    float *v = k + batch * qNH * row * HS;
-
-    // Permute and broadcast input
-    // q: (batch, row, qNH, HS) -> (batch, qNH, row, HS)
-    // k: (batch, row, kvNH, HS) -> (batch, qNH, row, HS)
-    // v: (batch, row, kvNH, HS) -> (batch, qNH, row, HS)
-    //
-    // Tradeoff: it uses more memory for the broadcasted K and V tensors, but this should be acceptable
-    // given the benefits in simplicity and performance improvements (remove for-loop in following matmul)
-    int total_threads = batch * qNH * row * HS;
-    int block_size = 256;
-    int num_blocks = CEIL_DIV(total_threads, block_size);
-    gqa_permute_kernel<<<num_blocks, block_size>>>(q, k, v, (const float*)inp,
-                                                  batch, row, qNH, kvNH, HS);
-
-    const float alpha = 1.0f;
-    const float beta = 0.0f;
-
-    // Batched matrix multiplication: Q @ K^T
-    cublas_check(cublasSgemmStridedBatched(cublas_handle,
-                            CUBLAS_OP_T, CUBLAS_OP_N,
-                            row, row, HS,
-                            &alpha,
-                            k, HS, row * HS,
-                            q, HS, row * HS,
-                            &beta,
-                            att, row, row * row,
-                            batch * qNH));
-
-    // Apply scaled softmax with causal masking
-    float scale = 1.0f / sqrtf(HS);
-    int softmax_block_size = 256;
-    size_t shared_mem_size = 2 * (softmax_block_size / 32) * sizeof(float);
-    int grid_size = batch * qNH * row;
-    scaled_softmax_kernel<<<grid_size, softmax_block_size, shared_mem_size>>>(
-        att, att, batch, qNH, row, scale);
-
-    // Batched matrix multiplication: attention @ V
-    cublas_check(cublasSgemmStridedBatched(cublas_handle,
-                            CUBLAS_OP_N, CUBLAS_OP_N,
-                            HS, row, row,
-                            &alpha,
-                            v, HS, row * HS,
-                            att, row, row * row,
-                            &beta,
-                            workspace, HS, row * HS,
-                            batch * qNH));
-
-    // Unpermute result from (batch, qNH, row, HS) -> (batch, row, qNH, HS)
-    num_blocks = CEIL_DIV(batch * row * qNH * HS, block_size);
-    gqa_unpermute_kernel<<<num_blocks, block_size>>>(workspace, (float *)out,
-                                                batch, row, qNH, HS);
-
-    cuda_check(cudaFree(workspace));
-    cuda_check(cudaFree(qkv));
-    cuda_check(cudaFree(att));
+    void *qkv = cuda_malloc(batch * row * 3 * qNH * HS * sizeof(float));
+    cuda_replicate_qkv(qkv, inp, batch, row, qNH, kvNH, HS);
+    cuda_mh_sdpa(out, qkv, batch, row, qNH, HS);
+    cuda_free(qkv);
 }
 
 /* Root Mean Square Layer Normalization: x / sqrt(mean(x^2) + eps) * weight
@@ -851,7 +768,78 @@ void cuda_swiglu(void *out, const void *inp, int batch, int row, int col)
  */
 void cuda_mh_sdpa(void *out, const void *inp, int batch, int row, int NH, int HS)
 {
-    return cuda_gq_sdpa(out, inp, batch, row, NH, NH, HS); // qNH = kvNH
+    float *qkv, *att, *vatt;
+
+    // Allocate space for broadcasted K and V
+    size_t q_size = (batch * NH * row * HS) * sizeof(float);
+    size_t qkv_size = 3 * q_size;
+    size_t att_size = batch * NH * row * row * sizeof(float);
+
+    cuda_check(cudaMalloc(&qkv, qkv_size));
+    // try best to reuse input buffer
+    vatt = (float *)inp;
+    att = vatt + q_size;
+    if (att_size > q_size * 2) {
+	    cuda_check(cudaMalloc(&att, att_size));
+    }
+
+    float *q = qkv;
+    float *k = qkv + batch * NH * row * HS;
+    float *v = k + batch * NH * row * HS;
+
+    // Permute input
+    // q: (batch, row, NH, HS) -> (batch, NH, row, HS)
+    // k: (batch, row, NH, HS) -> (batch, NH, row, HS)
+    // v: (batch, row, NH, HS) -> (batch, NH, row, HS)
+    //
+    // Tradeoff: it uses more memory for the broadcasted K and V tensors, but this should be acceptable
+    // given the benefits in simplicity and performance improvements (remove for-loop in following matmul)
+    int total_threads = batch * NH * row * HS;
+    int block_size = 256;
+    int num_blocks = CEIL_DIV(total_threads, block_size);
+    permute_kernel<<<num_blocks, block_size>>>(q, k, v, (const float*)inp, batch, row, NH, HS);
+
+    const float alpha = 1.0f;
+    const float beta = 0.0f;
+
+    // Batched matrix multiplication: Q @ K^T
+    cublas_check(cublasSgemmStridedBatched(cublas_handle,
+                            CUBLAS_OP_T, CUBLAS_OP_N,
+                            row, row, HS,
+                            &alpha,
+                            k, HS, row * HS,
+                            q, HS, row * HS,
+                            &beta,
+                            att, row, row * row,
+                            batch * NH));
+
+    // Apply scaled softmax with causal masking
+    float scale = 1.0f / sqrtf(HS);
+    int softmax_block_size = 256;
+    size_t shared_mem_size = 2 * (softmax_block_size / 32) * sizeof(float);
+    int grid_size = batch * NH * row;
+    scaled_softmax_kernel<<<grid_size, softmax_block_size, shared_mem_size>>>(
+        att, att, batch, NH, row, scale);
+
+    // Batched matrix multiplication: attention @ V
+    cublas_check(cublasSgemmStridedBatched(cublas_handle,
+                            CUBLAS_OP_N, CUBLAS_OP_N,
+                            HS, row, row,
+                            &alpha,
+                            v, HS, row * HS,
+                            att, row, row * row,
+                            &beta,
+                            vatt, HS, row * HS,
+                            batch * NH));
+
+    // Unpermute result from (batch, NH, row, HS) -> (batch, row, NH, HS)
+    num_blocks = CEIL_DIV(batch * row * NH * HS, block_size);
+    unpermute_kernel<<<num_blocks, block_size>>>((float *)out, vatt, batch, row, NH, HS);
+
+    cuda_free(qkv);
+    if (att_size > q_size * 2) {
+        cuda_free(att);
+    }
 }
 
 /*
@@ -866,7 +854,10 @@ void cuda_mh_sdpa(void *out, const void *inp, int batch, int row, int NH, int HS
  */
 void cuda_mq_sdpa(void *out, const void *inp, int batch, int row, int qNH, int HS)
 {
-    return cuda_gq_sdpa(out, inp, batch, row, qNH, 1, HS); // kvNH = 1
+    void *qkv = cuda_malloc(batch * row * 3 * qNH * HS * sizeof(float));
+    cuda_replicate_qkv(qkv, inp, batch, row, qNH, 1, HS);
+    cuda_mh_sdpa(out, qkv, batch, row, qNH, HS);
+    cuda_free(qkv);
 }
 
 /*
