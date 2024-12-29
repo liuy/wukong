@@ -590,6 +590,42 @@ __global__ void add_kernel(float* out, const float* a, const float* b, int row, 
     out4[idx] = vout;
 }
 
+__global__ void replicate_qkv_kernel(floatX *out, const floatX *inp, int batch, int row, int qNH, int kvNH, int HS)
+{
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+
+    if (idx >= batch * row)
+        return;
+
+    int b = idx / row;
+    int r = idx % row;
+
+    // Base offsets for input and output
+    const floatX* inp_row = inp + (b * row * (qNH + 2 * kvNH) * HS) + (r * (qNH + 2 * kvNH) * HS);
+    floatX* out_row = out + (b * row * (3 * qNH) * HS) + (r * (3 * qNH) * HS);
+
+    // Copy Q heads
+    memcpy(out_row, inp_row, qNH * HS * sizeof(floatX));
+
+    const floatX* k_inp = inp_row + qNH * HS;
+    const floatX* v_inp = k_inp + kvNH * HS;
+
+    floatX* k_out = out_row + qNH * HS;
+    floatX* v_out = k_out + qNH * HS;
+
+    int gNH = qNH / kvNH;
+
+    // Replicate K heads
+    for (int i = 0; i < gNH; i++) {
+        memcpy(k_out + i * kvNH * HS, k_inp, kvNH * HS * sizeof(floatX));
+    }
+
+    // Replicate V heads
+    for (int i = 0; i < gNH; i++) {
+        memcpy(v_out + i * kvNH * HS, v_inp, kvNH * HS * sizeof(floatX));
+    }
+}
+
 extern "C" {
 void cuda_init(void)
 {
@@ -1019,6 +1055,25 @@ void cuda_group_query_attention(void *out, const void *embeds, const void *freqs
 
     cuda_free(qkv);
     cuda_free(att);
+}
+
+/*
+ * Replicate K, V to match the size of Q
+ *
+ * @param out: output matrix(batch, row, (3 * qNH) * HS)
+ * @param inp: input matrix(batch, row, (qNH + 2 * kvNH) * HS) (Q, K, V) concatenated along the last dimension
+ * @param batch: batch size
+ * @param row: row size
+ * @param qNH: number of Q heads
+ * @param kvNH: number of K and V heads
+ * @param HS: head size
+ */
+void cuda_replicate_qkv(void *out, const void *inp, int batch, int row, int qNH, int kvNH, int HS)
+{
+    const int block_size = 256;
+    int total_threads = batch * row; // copy Q, K, V for each row
+    int num_blocks = CEIL_DIV(total_threads, block_size);
+    replicate_qkv_kernel<<<num_blocks, block_size>>>((floatX *)out, (const floatX *)inp, batch, row, qNH, kvNH, HS);
 }
 
 } // extern "C"

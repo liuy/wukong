@@ -837,3 +837,63 @@ TEST(Cuda, cuda_group_query_attention)
     cuda_free(d_norm_weight);
     cuda_free(d_qkv_weight);
 }
+
+TEST(Cuda, cuda_replicate_qkv)
+{
+    int batch = 2;
+    int row = 2;
+    int qNH = 4;
+    int kvNH = 2;
+    int HS = 2;
+
+    float inp[batch * row * (qNH + 2 * kvNH) * HS] = {
+        // Batch 1, Row 1
+        0.1f, 0.2f, 0.3f, 0.4f, 0.5f, 0.6f, 0.7f, 0.8f,     // Q (4 heads * 2 dims)
+        0.1f, 0.2f, 0.3f, 0.4f,                             // K (2 heads * 2 dims)
+        0.5f, 0.6f, 0.7f, 0.8f,                             // V (2 heads * 2 dims)
+        // Batch 1, Row 2
+        1.1f, 1.2f, 1.3f, 1.4f, 1.5f, 1.6f, 1.7f, 1.8f,     // Q
+        0.9f, 1.0f, 1.1f, 1.2f,                             // K
+        1.3f, 1.4f, 1.5f, 1.6f,                             // V
+        // Batch 2, Row 1 (same pattern as batch 1)
+        0.1f, 0.2f, 0.3f, 0.4f, 0.5f, 0.6f, 0.7f, 0.8f,
+        0.1f, 0.2f, 0.3f, 0.4f,
+        0.5f, 0.6f, 0.7f, 0.8f,
+        // Batch 2, Row 2
+        1.1f, 1.2f, 1.3f, 1.4f, 1.5f, 1.6f, 1.7f, 1.8f,
+        0.9f, 1.0f, 1.1f, 1.2f,
+        1.3f, 1.4f, 1.5f, 1.6f
+    };
+
+    float out[batch * row * 3 * qNH * HS] = {0};
+
+    float res[batch * row * 3 * qNH * HS] = {
+        // Batch 1, Row 1
+        0.1f, 0.2f, 0.3f, 0.4f, 0.5f, 0.6f, 0.7f, 0.8f,     // Q
+        0.1f, 0.2f, 0.3f, 0.4f, 0.1f, 0.2f, 0.3f, 0.4f,     // K replicated
+        0.5f, 0.6f, 0.7f, 0.8f, 0.5f, 0.6f, 0.7f, 0.8f,     // V replicated
+        // Batch 1, Row 2
+        1.1f, 1.2f, 1.3f, 1.4f, 1.5f, 1.6f, 1.7f, 1.8f,     // Q
+        0.9f, 1.0f, 1.1f, 1.2f, 0.9f, 1.0f, 1.1f, 1.2f,     // K replicated
+        1.3f, 1.4f, 1.5f, 1.6f, 1.3f, 1.4f, 1.5f, 1.6f,     // V replicated
+        // Batch 2, Row 1
+        0.1f, 0.2f, 0.3f, 0.4f, 0.5f, 0.6f, 0.7f, 0.8f,     // Q
+        0.1f, 0.2f, 0.3f, 0.4f, 0.1f, 0.2f, 0.3f, 0.4f,     // K replicated
+        0.5f, 0.6f, 0.7f, 0.8f, 0.5f, 0.6f, 0.7f, 0.8f,     // V replicated
+        // Batch 2, Row 2
+        1.1f, 1.2f, 1.3f, 1.4f, 1.5f, 1.6f, 1.7f, 1.8f,     // Q
+        0.9f, 1.0f, 1.1f, 1.2f, 0.9f, 1.0f, 1.1f, 1.2f,     // K replicated
+        1.3f, 1.4f, 1.5f, 1.6f, 1.3f, 1.4f, 1.5f, 1.6f      // V replicated
+    };
+
+    void *d_out = cuda_malloc(batch * row * 3 * qNH * HS * sizeof(float));
+    void *d_inp = cuda_malloc(batch * row * (qNH + 2 * kvNH) * HS * sizeof(float));
+    cuda_to_device(d_inp, inp, batch * row * (qNH + 2 * kvNH) * HS * sizeof(float));
+
+    cuda_replicate_qkv(d_out, d_inp, batch, row, qNH, kvNH, HS);
+    cuda_to_host(out, d_out, batch * row * 3 * qNH * HS * sizeof(float));
+    assert_array_eq(res, out, batch * row * 3 * qNH * HS);
+
+    cuda_free(d_out);
+    cuda_free(d_inp);
+}
