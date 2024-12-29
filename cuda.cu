@@ -1031,21 +1031,23 @@ void cuda_add(void* out, const void* a, const void* b, int row, int col)
 void cuda_group_query_attention(void *out, const void *embeds, const void *freqs, const void *out_weight, const void *norm_weight,
                                 const void *qkv_weight, int batch, int row, int NH, int kvNH, int HS, float eps, int dtype)
 {
-    void *qkv, *att;
+    void *qkv, *att, *output;
     int col = NH * HS;
     int qkv_weight_row = (NH + 2 * kvNH) * HS;
     att = cuda_malloc(batch * row * col * sizeof(float));
+    output = cuda_malloc(batch * row * col * sizeof(float));
     qkv = cuda_malloc(batch * row * qkv_weight_row * sizeof(float));
 
     cuda_rmsnorm(att, embeds, norm_weight, batch * row, col, eps);
     cuda_matmul(qkv, att, qkv_weight, nullptr, batch * row, col, qkv_weight_row, dtype); // (batch * row, col) @ (qkv_weight_row, col)^T
     cuda_rope_qkv(qkv, qkv, freqs, batch, row, NH, kvNH, HS); // rope qkv in-place
     cuda_gq_sdpa(att, qkv, batch, row, NH, kvNH, HS);
-    cuda_matmul(att, att, out_weight, nullptr, batch * row, col, col, dtype); // (batch * row, col) @ (col, col)^T
-    cuda_add(out, embeds, att, batch * row, col); // residual connect embeddings to attention
+    cuda_matmul(output, att, out_weight, nullptr, batch * row, col, col, dtype); // (batch * row, col) @ (col, col)^T
+    cuda_add(out, embeds, output, batch * row, col); // residual connect embeddings to attention
 
     cuda_free(qkv);
     cuda_free(att);
+    cuda_free(output);
 }
 
 /*
