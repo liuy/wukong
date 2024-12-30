@@ -1114,6 +1114,19 @@ void cuda_feed_foward(void *out, const void *attn, const void *fc_weight, const 
     cuda_swiglu(fc, fc, batch, row, ffl); // update fc in-place
     cuda_matmul(ffn, fc, out_weight, nullptr, batch * row, ffl, col, dtype); // (batch * row, ffl) @ (col, ffl)^T
     cuda_add(out, attn, ffn, batch * row, col); // residual connect attention to feedforward
+
+    cuda_free(fc);
+    cuda_free(ffn);
+}
+
+void cuda_classify(void *out, void *ff, const void *norm_weight, const void *out_weight, int batch, int row, int col, int wsize, float eps, int dtype)
+{
+    void *ffn = (float *)ff + batch * col; // reuse the memory of ff
+
+    assert(batch * 2 <= row);
+    cuda_get_row(ff, ff, batch, row, col, -1); // out shape: (batch, col)
+    cuda_rmsnorm(ffn, ff, norm_weight, batch, col, eps);
+    cuda_matmul(out, ffn, out_weight, nullptr, batch, col, wsize, dtype); // (batch, col) @ (wsize, col)^T
 }
 
 } // extern "C"

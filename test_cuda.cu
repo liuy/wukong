@@ -1023,3 +1023,74 @@ TEST(Cuda, cuda_get_row) {
     cuda_free(d_out);
     cuda_free(d_inp);
 }
+
+TEST(Cuda, cuda_classify)
+{
+    int batch = 2;
+    int row = 4;
+    int col = 3;
+    int wsize = 16;
+    float eps = 1e-5;
+    int dtype = GGML_TYPE_F32;
+
+    float ff[batch * row * col] = {
+        // Batch 1
+        0.1f, 0.2f, 0.3f,  // Row 0
+        0.4f, 0.5f, 0.6f,  // Row 1
+        0.7f, 0.8f, 0.9f,  // Row 2
+        1.0f, 1.1f, 1.2f,  // Row 3
+        // Batch 2
+        1.3f, 1.4f, 1.5f,  // Row 0
+        1.6f, 1.7f, 1.8f,  // Row 1
+        1.9f, 2.0f, 2.1f,  // Row 2
+        2.2f, 2.3f, 2.4f   // Row 3
+    };
+
+    float norm_weight[col] = {
+        0.5f, 0.6f, 0.7f
+    };
+
+    float out_weight[wsize * col] = {
+        -0.8f, 0.6f, -0.4f,
+        0.2f, -0.1f, 0.9f,
+        -0.7f, 0.5f, -0.3f,
+        0.1f, -0.9f, 0.8f,
+        -0.6f, 0.4f, -0.2f,
+        0.0f, -0.8f, 0.7f,
+        -0.5f, 0.3f, -0.1f,
+        0.9f, -0.7f, 0.6f,
+        -0.4f, 0.2f, -0.0f,
+        0.8f, -0.6f, 0.5f,
+        -0.3f, 0.1f, -0.9f,
+        0.7f, -0.5f, 0.4f,
+        -0.2f, 0.0f, -0.8f,
+        0.6f, -0.4f, 0.3f,
+        -0.1f, 0.9f, -0.7f,
+        0.5f, -0.3f, 0.1f
+    };
+
+    float expected[batch * wsize] = {
+        -3.082416e-01, 7.162086e-01, -2.465933e-01, 1.160439e-01, -1.849450e-01, 5.439559e-02, -1.232966e-01, 4.460438e-01, -6.164833e-02, 3.843955e-01, -7.615382e-01, 3.227471e-01, -6.998899e-01, 2.610988e-01, -3.989008e-02, 1.232966e-01,
+        -3.145841e-01, 6.926064e-01, -2.537529e-01, 9.211579e-02, -1.929218e-01, 3.128454e-02, -1.320906e-01, 4.484127e-01, -7.125939e-02, 3.875815e-01, -7.404024e-01, 3.267504e-01, -6.795712e-01, 2.659192e-01, -1.911834e-02, 1.320906e-01
+    };
+
+    void *d_ff = cuda_malloc(batch * row * col * sizeof(float));
+    void *d_norm_weight = cuda_malloc(col * sizeof(float));
+    void *d_out_weight = cuda_malloc(wsize * col * sizeof(float));
+    void *d_out = cuda_malloc(batch * wsize * sizeof(float));
+
+    cuda_to_device(d_ff, ff, batch * row * col * sizeof(float));
+    cuda_to_device(d_norm_weight, norm_weight, col * sizeof(float));
+    cuda_to_device(d_out_weight, out_weight, wsize * col * sizeof(float));
+
+    cuda_classify(d_out, d_ff, d_norm_weight, d_out_weight, batch, row, col, wsize, eps, dtype);
+
+    float out[batch * wsize] = {0};
+    cuda_to_host(out, d_out, batch * wsize * sizeof(float));
+    assert_array_eq(expected, out, batch * wsize);
+
+    cuda_free(d_ff);
+    cuda_free(d_norm_weight);
+    cuda_free(d_out_weight);
+    cuda_free(d_out);
+}
