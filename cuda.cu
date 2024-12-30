@@ -1071,4 +1071,17 @@ void cuda_replicate_qkv(void *out, const void *inp, int batch, int row, int qNH,
     replicate_qkv_kernel<<<num_blocks, block_size>>>((floatX *)out, (const floatX *)inp, batch, row, qNH, kvNH, HS);
 }
 
+void cuda_feed_foward(void *out, const void *attn, const void *fc_weight, const void *norm_weight, const void *out_weight,
+                    int batch, int row, int col, int ffl, float eps, int dtype)
+{
+    void *ffn = cuda_malloc(batch * row * col * sizeof(float));
+    void *fc = cuda_malloc(batch * row * 2 * ffl * sizeof(float));
+
+    cuda_rmsnorm(ffn, attn, norm_weight, batch * row, col, eps);
+    cuda_matmul(fc, ffn, fc_weight, nullptr, batch * row, col, 2 * ffl, dtype); // (batch * row, col) @ (2 * ffl, col)^T
+    cuda_swiglu(fc, fc, batch, row, ffl); // update fc in-place
+    cuda_matmul(ffn, fc, out_weight, nullptr, batch * row, ffl, col, dtype); // (batch * row, ffl) @ (col, ffl)^T
+    cuda_add(out, attn, ffn, batch * row, col); // residual connect attention to feedforward
+}
+
 } // extern "C"

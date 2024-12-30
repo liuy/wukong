@@ -897,3 +897,72 @@ TEST(Cuda, cuda_replicate_qkv)
     cuda_free(d_out);
     cuda_free(d_inp);
 }
+TEST(Cuda, cuda_feed_foward)
+{
+    int batch = 2;
+    int row = 2;
+    int col = 4;
+    int ffl = 6;
+    float eps = 1e-5;
+    int dtype = GGML_TYPE_F32;
+
+    float attn[batch * row * col] = {
+        -0.5f, 0.3f, -0.7f, 0.9f,
+        0.8f, -0.6f, 0.4f, -0.2f,
+        -0.1f, 0.5f, -0.3f, 0.7f,
+        0.6f, -0.4f, 0.2f, -0.8f
+    };
+
+    float fc_weight[2 * ffl * col] = {
+        -0.1f, 0.1f, -0.05f, 0.05f,
+        0.02f, -0.02f, 0.03f, -0.03f,
+        -0.04f, 0.04f, -0.06f, 0.06f,
+        0.07f, -0.07f, 0.08f, -0.08f,
+        -0.09f, 0.09f, -0.01f, 0.01f,
+        0.05f, -0.05f, 0.06f, -0.06f,
+        -0.07f, 0.07f, -0.08f, 0.08f,
+        0.09f, -0.09f, 0.01f, -0.01f,
+        -0.02f, 0.02f, -0.03f, 0.03f,
+        0.04f, -0.04f, 0.05f, -0.05f,
+        -0.06f, 0.06f, -0.07f, 0.07f,
+        0.08f, -0.08f, 0.09f, -0.09f
+    };
+
+    float norm_weight[col] = {0.5f, 0.6f, 0.7f, 0.8f};
+
+    float out_weight[col * ffl] = {
+        0.1f, 0.2f, 0.3f, 0.4f, 0.5f, 0.6f,
+        0.7f, 0.8f, 0.9f, 1.0f, 1.1f, 1.2f,
+        0.1f, 0.2f, 0.3f, 0.4f, 0.5f, 0.6f,
+        0.7f, 0.8f, 0.9f, 1.0f, 1.1f, 1.2f,
+    };
+
+    float expected[batch * row * col] = {
+        -4.791765e-01, 3.560444e-01, -6.791764e-01, 9.560443e-01,
+        8.174522e-01, -5.537222e-01, 4.174522e-01, -1.537222e-01,
+        -8.072154e-02, 5.519935e-01, -2.807215e-01, 7.519935e-01,
+        6.204888e-01, -3.465915e-01, 2.204888e-01, -7.465915e-01
+    };
+
+    void *d_attn = cuda_malloc(batch * row * col * sizeof(float));
+    void *d_fc_weight = cuda_malloc(2 * ffl * col * sizeof(float));
+    void *d_norm_weight = cuda_malloc(col * sizeof(float));
+    void *d_out_weight = cuda_malloc(col * ffl * sizeof(float));
+
+    cuda_to_device(d_attn, attn, batch * row * col * sizeof(float));
+    cuda_to_device(d_fc_weight, fc_weight, 2 * ffl * col * sizeof(float));
+    cuda_to_device(d_norm_weight, norm_weight, col * sizeof(float));
+    cuda_to_device(d_out_weight, out_weight, col * ffl * sizeof(float));
+
+    cuda_feed_foward(d_attn, d_attn, d_fc_weight, d_norm_weight, d_out_weight, batch, row, col, ffl, eps, dtype);
+
+    float out[batch * row * col] = {0};
+    cuda_to_host(out, d_attn, batch * row * col * sizeof(float));
+
+    assert_array_eq(expected, out, batch * row * col);
+
+    cuda_free(d_attn);
+    cuda_free(d_fc_weight);
+    cuda_free(d_norm_weight);
+    cuda_free(d_out_weight);
+}
