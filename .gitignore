@@ -1,3 +1,7 @@
 .vscode
 .editorconfig
 build
+*.out
+coverage.html
+go.mod
+*.ipynb
