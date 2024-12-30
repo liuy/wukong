@@ -544,6 +544,7 @@ func (g *GGUFFile) GetConfig() *Config {
 		NumHead:    g.KVs[arch+".attention.head_count"].(uint32),
 		EmbedDim:   g.KVs[arch+".embedding_length"].(uint32),
 		RopeTheta:  g.KVs[arch+".rope.freq_base"].(float32),
+		FeedFWDLen: g.KVs[arch+".feed_forward_length"].(uint32),
 	}
 	eps := g.KVs[arch+".attention.layer_norm_rms_epsilon"]
 	if eps == nil {

@@ -4,6 +4,7 @@ type Config struct {
 	Arch        string  // "llama"
 	ContextLen  uint32  // context length
 	NumHidden   uint32  // number of hidden layers
+	FeedFWDLen  uint32  // feed forward length
 	HeadDim     uint32  // head dimension
 	NumHead     uint32  // number of attention heads
 	NumKVHead   uint32  // number of key and value heads

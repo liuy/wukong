@@ -109,7 +109,7 @@ func TestGGUFGetConfig(t *testing.T) {
 	if err != nil {
 		t.Skip("llama3.2-3b.gguf: ", err)
 	}
-	assert.Equal(t, &Config{"llama", 131072, 28, 128, 24, 8, 3072, 1e-05, 500000}, m.Config)
+	assert.Equal(t, &Config{"llama", 131072, 28, 8192, 128, 24, 8, 3072, 1e-05, 500000}, m.Config)
 	text := "你好，World!"
 	ids := m.Encode(text)
 	assert.Equal(t, m.Decode(ids), text)
@@ -125,6 +125,7 @@ func TestGGUFGetConfig(t *testing.T) {
 			"llama.rope.freq_base":               float32(500000),
 			"llama.attention.layer_norm_epsilon": float32(1e-05),
 			"llama.attention.head_count_kv":      uint32(8),
+			"llama.feed_forward_length":          uint32(8192),
 		},
 	}
 	assert.Equal(t, g.GetConfig(), m.Config)
