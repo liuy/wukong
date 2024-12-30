@@ -543,7 +543,7 @@ __global__ void dequantize_Q8_0(float *out, const block_q8_0 *inp, int row, int 
     __syncthreads();
 
     float scale = __half2float(shared_block[threadIdx.x].scale);
-#pragma unroll
+    #pragma unroll
     for (int i = 0; i < bs; ++i) {
 	    int out_idx = r * nb * bs + b * bs + i;
 	    out[out_idx] = scale * shared_block[threadIdx.x].d[i];
@@ -598,11 +598,13 @@ __global__ void replicate_qkv_kernel(floatX *out, const floatX *inp, int batch, 
     int gNH = qNH / kvNH;
 
     // Replicate K heads
+    #pragma unroll
     for (int i = 0; i < gNH; i++) {
         memcpy(k_out + i * kvNH * HS, k_inp, kvNH * HS * sizeof(floatX));
     }
 
     // Replicate V heads
+    #pragma unroll
     for (int i = 0; i < gNH; i++) {
         memcpy(v_out + i * kvNH * HS, v_inp, kvNH * HS * sizeof(floatX));
     }
