@@ -610,6 +610,15 @@ __global__ void replicate_qkv_kernel(floatX *out, const floatX *inp, int batch, 
     }
 }
 
+__global__ void get_row_kernel(float *out, const float *inp, int batch, int row, int col, int idx) {
+    int b = blockIdx.x * blockDim.x + threadIdx.x;
+    if (b < batch) {
+        const float *src = inp + b * row * col + idx * col;
+        float *dst = out + b * col;
+        memcpy(dst, src, col * sizeof(float));
+    }
+}
+
 extern "C" {
 void cuda_init(void)
 {
@@ -1069,6 +1078,29 @@ void cuda_replicate_qkv(void *out, const void *inp, int batch, int row, int qNH,
     int total_threads = batch * row; // copy Q, K, V for each row
     int num_blocks = CEIL_DIV(total_threads, block_size);
     replicate_qkv_kernel<<<num_blocks, block_size>>>((floatX *)out, (const floatX *)inp, batch, row, qNH, kvNH, HS);
+}
+
+/*
+ * Get the row at the given index
+ *
+ * @param out: output matrix(batch, col)
+ * @param inp: input matrix(batch, row, col)
+ * @param batch: batch size
+ * @param row: row index
+ * @param col: column size
+ * @param idx: index. If negative, it is idx from the end.
+ */
+void cuda_get_row(void *out, const void *inp, int batch, int row, int col, int idx)
+{
+    int block_size = 8;
+    int total_threads = batch;
+    int grid_size = CEIL_DIV(total_threads, block_size);
+
+    if (idx < 0)
+        idx += row;
+    assert(idx >= 0 && idx < row);
+    get_row_kernel<<<grid_size, block_size>>>((float *)out, (const float *)inp, batch, row, col, idx);
+    cuda_check(cudaGetLastError());
 }
 
 void cuda_feed_foward(void *out, const void *attn, const void *fc_weight, const void *norm_weight, const void *out_weight,

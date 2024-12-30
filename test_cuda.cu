@@ -966,3 +966,60 @@ TEST(Cuda, cuda_feed_foward)
     cuda_free(d_norm_weight);
     cuda_free(d_out_weight);
 }
+
+TEST(Cuda, cuda_get_row) {
+    int batch = 2;
+    int row = 3;
+    int col = 4;
+
+    float inp[batch * row * col] = {
+        // batch 0
+        1.0f, 2.0f, 3.0f, 4.0f,    // row 0
+        5.0f, 6.0f, 7.0f, 8.0f,    // row 1
+        9.0f, 10.0f, 11.0f, 12.0f, // row 2
+        // batch 1
+        13.0f, 14.0f, 15.0f, 16.0f,    // row 0
+        17.0f, 18.0f, 19.0f, 20.0f,    // row 1
+        21.0f, 22.0f, 23.0f, 24.0f     // row 2
+    };
+
+    float out[batch * col] = {0};
+
+    float res0[batch * col] = {
+        1.0f, 2.0f, 3.0f, 4.0f,
+        13.0f, 14.0f, 15.0f, 16.0f
+    };
+
+    void *d_out = cuda_malloc(batch * col * sizeof(float));
+    void *d_inp = cuda_malloc(batch * row * col * sizeof(float));
+    cuda_to_device(d_inp, inp, batch * row * col * sizeof(float));
+
+    cuda_get_row(d_out, d_inp, batch, row, col, 0);
+    cuda_to_host(out, d_out, batch * col * sizeof(float));
+    assert_array_eq(res0, out, batch * col);
+
+    float res1[batch * col] = {
+        5.0f, 6.0f, 7.0f, 8.0f,
+        17.0f, 18.0f, 19.0f, 20.0f
+    };
+
+    cuda_get_row(d_out, d_inp, batch, row, col, 1);
+    cuda_to_host(out, d_out, batch * col * sizeof(float));
+    assert_array_eq(res1, out, batch * col);
+
+    float res2[batch * col] = {
+        9.0f, 10.0f, 11.0f, 12.0f,
+        21.0f, 22.0f, 23.0f, 24.0f
+    };
+
+    cuda_get_row(d_out, d_inp, batch, row, col, 2);
+    cuda_to_host(out, d_out, batch * col * sizeof(float));
+    assert_array_eq(res2, out, batch * col);
+
+    cuda_get_row(d_out, d_inp, batch, row, col, -1);
+    cuda_to_host(out, d_out, batch * col * sizeof(float));
+    assert_array_eq(res2, out, batch * col);
+
+    cuda_free(d_out);
+    cuda_free(d_inp);
+}
