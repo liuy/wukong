@@ -63,11 +63,23 @@ __device__ float warpReduceSum(float val) {
     return val;
 }
 
-__device__ float warpReduceMax(float val) {
+__device__ float warp_reduce_max(float val) {
     for (int offset = 16; offset > 0; offset /= 2) {
         val = fmaxf(val, __shfl_down_sync(0xFFFFFFFF, val, offset));
     }
     return val;
+}
+
+__device__ __forceinline__ void warp_reduce_max(float& val, int& idx) {
+    #pragma unroll
+    for (int offset = WARP_SIZE/2; offset > 0; offset /= 2) {
+        float other_val = __shfl_down_sync(0xffffffff, val, offset);
+        int other_idx = __shfl_down_sync(0xffffffff, idx, offset);
+        if (other_val > val) {
+            val = other_val;
+            idx = other_idx;
+        }
+    }
 }
 
 // Handles both scaling of attention scores and softmax computation with causal masking
@@ -99,7 +111,7 @@ __global__ void scaled_softmax_kernel(float* out, const float* inp, int B, int N
     }
 
     // warp-level reduction for maxval
-    maxval = warpReduceMax(maxval);
+    maxval = warp_reduce_max(maxval);
 
     // write per-warp maxval to shared memory
     if (laneId == 0) maxvals[warpId] = maxval;
@@ -177,7 +189,7 @@ __global__ void softmax_kernel(float* output, const float* input, int row, int c
     }
 
     // Warp-level reduction for max
-    thread_max = warpReduceMax(thread_max);
+    thread_max = warp_reduce_max(thread_max);
 
     // Store per-warp results
     if (lane_id == 0) {
@@ -610,12 +622,60 @@ __global__ void replicate_qkv_kernel(floatX *out, const floatX *inp, int batch, 
     }
 }
 
-__global__ void get_row_kernel(float *out, const float *inp, int batch, int row, int col, int idx) {
+__global__ void get_row_kernel(float *out, const float *inp, int batch, int row, int col, int idx)
+{
     int b = blockIdx.x * blockDim.x + threadIdx.x;
     if (b < batch) {
         const float *src = inp + b * row * col + idx * col;
         float *dst = out + b * col;
         memcpy(dst, src, col * sizeof(float));
+    }
+}
+
+__global__ void argmax_kernel(int *out, const float *inp, int row, int col)
+{
+    __shared__ float smax[WARP_SIZE];  // Max values per warp
+    __shared__ int sidx[WARP_SIZE];    // Corresponding indices
+
+    int r = blockIdx.x;                // One row per block
+    int tid = threadIdx.x;             // Thread ID
+    int wid = tid / WARP_SIZE;         // Warp ID
+    int lane = tid % WARP_SIZE;        // Lane within warp
+
+    if (r >= row) return;
+
+    // Each thread's running max
+    float max_val = -INFINITY;
+    int max_idx = -1;
+
+    for (int i = tid; i < col; i += blockDim.x) {
+        float val = inp[r * col + i];
+        if (val > max_val) {
+            max_val = val;
+            max_idx = i;
+        }
+    }
+
+    // Warp-level reduction
+    warp_reduce_max(max_val, max_idx);
+
+    // Write warp results to shared memory
+    if (lane == 0) {
+        smax[wid] = max_val;
+        sidx[wid] = max_idx;
+    }
+    __syncthreads();
+
+    // Final reduction across warps by first warp
+    if (wid == 0) {
+        max_val = (lane < blockDim.x/WARP_SIZE) ? smax[lane] : -INFINITY;
+        max_idx = (lane < blockDim.x/WARP_SIZE) ? sidx[lane] : -1;
+
+        warp_reduce_max(max_val, max_idx);
+
+        if (lane == 0) {
+            out[r] = max_idx;
+        }
     }
 }
 
@@ -1100,6 +1160,22 @@ void cuda_get_row(void *out, const void *inp, int batch, int row, int col, int i
         idx += row;
     assert(idx >= 0 && idx < row);
     get_row_kernel<<<grid_size, block_size>>>((float *)out, (const float *)inp, batch, row, col, idx);
+    cuda_check(cudaGetLastError());
+}
+
+/*
+ * Get the idx of the maximum value along the last dimension
+ *
+ * @param out: output vector(row)
+ * @param inp: input matrix(row, col)
+ * @param row: row size
+ * @param col: column size
+ */
+void cuda_argmax(void *out, const void *inp, int row, int col)
+{
+    const int block_size = 256;
+    const int grid_size = row;
+    argmax_kernel<<<grid_size, block_size>>>((int *)out, (const float *)inp, row, col);
     cuda_check(cudaGetLastError());
 }
 
