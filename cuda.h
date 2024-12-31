@@ -15,7 +15,7 @@ void cuda_rope_qkv(void *out, const void *inp, const void *raw_freqs, int batch,
 void cuda_rope(void *out, const void *inp, const void *raw_freqs, int batch, int row, int NH, int HS);
 void cuda_get_freqs_cis(void *freqs, int HS, int row, float theta, int use_scaled);
 void cuda_embedding(void* out, const void *inp, const void *embd, int batch, int row, int col, int dtype);
-void cuda_cat(void *out, const void *a, const void *b, int arow, int brow, int col);
+void cuda_cat(void *out, const void *a, const void *b, int arow, int brow, int col, int dtype);
 void cuda_div(void *out, const void *a, const void *b, int row, int col);
 void cuda_dequantize(void *out, const void *inp, int row, int col, int type);
 void cuda_add(void* out, const void* a, const void* b, int row, int col);

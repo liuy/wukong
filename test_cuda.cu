@@ -640,7 +640,7 @@ TEST(Cuda, cuda_cat) {
     cuda_to_device(d_a, a, arow * col * sizeof(float));
     cuda_to_device(d_b, b, brow * col * sizeof(float));
 
-    cuda_cat(d_out, d_a, d_b, arow, brow, col);
+    cuda_cat(d_out, d_a, d_b, arow, brow, col, GGML_TYPE_F32);
     cuda_to_host(out, d_out, (arow + brow) * col * sizeof(float));
 
     assert_array_eq(out, expected, (arow + brow) * col);

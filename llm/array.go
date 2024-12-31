@@ -523,7 +523,7 @@ func (r *cudaRunner) Cat(a, b *Tensor) (*Tensor, error) {
 	arow := a.GetDim(0)
 	brow := b.GetDim(0)
 	out := C.cuda_malloc(C.size_t((arow + brow) * col * a.ElemTypeSize() / a.ElemBlockSize()))
-	C.cuda_cat(out, a.dptr, b.dptr, C.int(arow), C.int(brow), C.int(col))
+	C.cuda_cat(out, a.dptr, b.dptr, C.int(arow), C.int(brow), C.int(col), C.int(a.dtype))
 	shape := a.Shape
 	shape[0] = arow + brow
 	ret := NewTensor(shape, a.dtype)
