@@ -203,6 +203,7 @@ static inline void _printm(const char *name, float* matrix, int batch, int row, 
         }
         printf("\n");
     }
+    fflush(stdout);
 }
 
 #define printm(mat, batch, row, col) _printm(#mat, mat, batch, row, col)
