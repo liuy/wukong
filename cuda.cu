@@ -1081,8 +1081,8 @@ void cuda_add(void* out, const void* a, const void* b, int row, int col)
     cuda_check(cudaGetLastError());
 }
 
-void cuda_group_query_attention(void *out, const void *embeds, const void *freqs, const void *out_weight, const void *norm_weight,
-                                const void *qkv_weight, int batch, int row, int NH, int kvNH, int HS, float eps, int dtype)
+void cuda_group_query_attention(void *out, const void *embeds, const void *freqs, const void *norm_weight, const void *qkv_weight,
+                                const void *out_weight, int batch, int row, int NH, int kvNH, int HS, float eps, int dtype)
 {
     void *qkv, *att, *output;
     int col = NH * HS;
@@ -1148,7 +1148,7 @@ void cuda_get_row(void *out, const void *inp, int batch, int row, int col, int i
 /*
  * Get the idx of the maximum value along the last dimension
  *
- * @param out: output vector(row)
+ * @param out: output vector(row) as type int
  * @param inp: input matrix(row, col)
  * @param row: row size
  * @param col: column size
@@ -1161,7 +1161,7 @@ void cuda_argmax(void *out, const void *inp, int row, int col)
     cuda_check(cudaGetLastError());
 }
 
-void cuda_feed_foward(void *out, const void *attn, const void *fc_weight, const void *norm_weight, const void *out_weight,
+void cuda_feed_forward(void *out, const void *attn, const void *norm_weight, const void *fc_weight, const void *out_weight,
                     int batch, int row, int col, int ffl, float eps, int dtype)
 {
     void *ffn = cuda_malloc(batch * row * col * sizeof(float));
@@ -1185,6 +1185,14 @@ void cuda_classify(void *out, void *ff, const void *norm_weight, const void *out
     cuda_get_row(ff, ff, batch, row, col, -1); // out shape: (batch, col)
     cuda_rmsnorm(ffn, ff, norm_weight, batch, col, eps);
     cuda_matmul(out, ffn, out_weight, nullptr, batch, col, wsize, dtype); // (batch, col) @ (wsize, col)^T
+}
+
+void cuda_predict(void *out, void *ff, const void *norm_weight, const void *out_weight, int batch, int row, int col, int wsize, float eps, int dtype)
+{
+    void *logits = cuda_malloc(batch * wsize * sizeof(float));
+    cuda_classify(logits, ff, norm_weight, out_weight, batch, row, col, wsize, eps, dtype);
+    cuda_argmax(out, logits, batch, wsize); // TODO: support temp, top_k and top_p
+    cuda_free(logits);
 }
 
 } // extern "C"

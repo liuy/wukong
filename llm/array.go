@@ -130,6 +130,9 @@ type Runner interface {
 	DivInPlace(a, b *Tensor) error
 	RopeInPlace(a, b *Tensor) error
 	Dequantize(a *Tensor) (*Tensor, error)
+	GroupQueryAttention(embeds, freqs, norm_weight, qkv_weight, out_weight *Tensor, HS int, kvNH int, eps float32) error
+	FeedForward(attn, norm_weight, fc_weight, out_weight *Tensor, ffl int, eps float32) error
+	Predict(ff, norm_weight, out_weight *Tensor, vocab_size int, eps float32) []int32
 }
 
 // Tensor is a multi-dimensional array of any type in a row-major order. It is represented by a Shape in the
@@ -383,6 +386,18 @@ func (a *Tensor) RopeInPlace(b *Tensor) error { return a.Runner.RopeInPlace(a, b
 // Dequantize dequantizes the tensor to float32
 func (a *Tensor) Dequantize() (*Tensor, error) { return a.Runner.Dequantize(a) }
 
+func (a *Tensor) GroupQueryAttention(freqs, norm_weight, qkv_weight, out_weight *Tensor, NH int, kvNH int, eps float32) error {
+	return a.Runner.GroupQueryAttention(a, freqs, norm_weight, qkv_weight, out_weight, NH, kvNH, eps)
+}
+
+func (a *Tensor) FeedForward(norm_weight, fc_weight, out_weight *Tensor, ffl int, eps float32) error {
+	return a.Runner.FeedForward(a, norm_weight, fc_weight, out_weight, ffl, eps)
+}
+
+func (a *Tensor) Predict(norm_weight, out_weight *Tensor, vocab_size int, eps float32) []int32 {
+	return a.Runner.Predict(a, norm_weight, out_weight, vocab_size, eps)
+}
+
 // Run array operations on the CUDA device
 type cudaRunner struct{}
 
@@ -575,4 +590,47 @@ func (r *cudaRunner) RopeInPlace(a, b *Tensor) error {
 	NH := col / HS
 	C.cuda_rope(a.dptr, a.dptr, b.dptr, C.int(batch), C.int(row), C.int(NH), C.int(HS))
 	return nil
+}
+
+func (r *cudaRunner) GroupQueryAttention(embeds, freqs, norm_weight, qkv_weight, out_weight *Tensor, NH int, kvNH int, eps float32) error {
+	col := embeds.GetDim(-1)
+	HS := col / NH
+	row := embeds.GetDim(-2)
+	batch := 1
+	if embeds.NumDims() == 3 {
+		batch = embeds.GetDim(0)
+	}
+	dtype := out_weight.dtype
+	C.cuda_group_query_attention(embeds.dptr, embeds.dptr, freqs.dptr, norm_weight.dptr, qkv_weight.dptr, out_weight.dptr,
+		C.int(batch), C.int(row), C.int(NH), C.int(kvNH), C.int(HS), C.float(eps), C.int(dtype))
+	return nil
+}
+
+func (r *cudaRunner) FeedForward(attn, norm_weight, fc_weight, out_weight *Tensor, ffl int, eps float32) error {
+	col := attn.GetDim(-1)
+	row := attn.GetDim(-2)
+	batch := 1
+	if attn.NumDims() == 3 {
+		batch = attn.GetDim(0)
+	}
+	dtype := out_weight.dtype
+	C.cuda_feed_forward(attn.dptr, attn.dptr, norm_weight.dptr, fc_weight.dptr, out_weight.dptr, C.int(batch), C.int(row), C.int(col), C.int(ffl), C.float(eps), C.int(dtype))
+	return nil
+}
+
+func (r *cudaRunner) Predict(ff, norm_weight, out_weight *Tensor, vocab_size int, eps float32) []int32 {
+	col := ff.GetDim(-1)
+	row := ff.GetDim(-2)
+	batch := 1
+	if ff.NumDims() == 3 {
+		batch = ff.GetDim(0)
+	}
+	tids := make([]int32, batch)
+	tids_size := batch * int(unsafe.Sizeof(int32(0)))
+	d_out := C.cuda_malloc(C.size_t(tids_size))
+	dtype := out_weight.dtype
+	C.cuda_predict(d_out, ff.dptr, norm_weight.dptr, out_weight.dptr, C.int(batch), C.int(row), C.int(col), C.int(vocab_size), C.float(eps), C.int(dtype))
+	C.cuda_to_host(unsafe.Pointer(&tids[0]), d_out, C.size_t(tids_size))
+
+	return tids
 }
