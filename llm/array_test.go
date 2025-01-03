@@ -126,6 +126,20 @@ func TestTensorFormat(t *testing.T) {
 		assert.Equal(t, tt.expected, result)
 	}
 	// runtime.GC() // test if finalizer is called
+	a, err := MakeTensor(Shape{3, 3}, []float32{1.1, 2.2, 3.3, 4.4, 5.5, 6.6, 7.7, 8.8, 9.9})
+	assert.NoErr(t, err)
+	res := fmt.Sprintf("%1r", a)
+	assert.Equal(t, "Shape: (3, 3)\nType: F32\nData:\nRow 1:\n 1.1 2.2 3.3\n", res)
+	res = fmt.Sprintf("%2r", a)
+	assert.Equal(t, "Shape: (3, 3)\nType: F32\nData:\nRow 2:\n 4.4 5.5 6.6\n", res)
+	res = fmt.Sprintf("%3r", a)
+	assert.Equal(t, "Shape: (3, 3)\nType: F32\nData:\nRow 3:\n 7.7 8.8 9.9\n", res)
+	res = fmt.Sprintf("%1c", a)
+	assert.Equal(t, "Shape: (3, 3)\nType: F32\nData:\nColumn 1:\n 1.1\n 4.4\n 7.7\n", res)
+	res = fmt.Sprintf("%2c", a)
+	assert.Equal(t, "Shape: (3, 3)\nType: F32\nData:\nColumn 2:\n 2.2\n 5.5\n 8.8\n", res)
+	res = fmt.Sprintf("%3c", a)
+	assert.Equal(t, "Shape: (3, 3)\nType: F32\nData:\nColumn 3:\n 3.3\n 6.6\n 9.9\n", res)
 }
 
 func TestShapeFormat(t *testing.T) {

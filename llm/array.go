@@ -306,6 +306,35 @@ func (t *Tensor) Format(st fmt.State, r rune) {
 	data := "\nData:\n"
 	stride := t.GetDim(-1)
 	d := reflect.ValueOf(t.ToHost())
+
+	// Parse format specifier for row/column printing.
+	// For e.g, "%1r" for first row, "%1c" for first column
+	if width, ok := st.Width(); ok {
+		switch r {
+		case 'r': // Print specific row
+			data += "Row " + fmt.Sprint(width) + ":\n"
+			start := (width - 1) * stride
+			end := start + stride
+			if start < t.Len() {
+				for i := start; i < end && i < t.Len(); i++ {
+					data += fmt.Sprintf(" %v", d.Index(i))
+				}
+				data += "\n"
+				fmt.Fprintf(st, "%s%s", s, data)
+				return
+			}
+		case 'c': // Print specific column
+			data += "Column " + fmt.Sprint(width) + ":\n"
+			for i := width - 1; i < t.Len(); i += stride {
+				data += fmt.Sprintf(" %v", d.Index(i))
+				data += "\n"
+			}
+			fmt.Fprintf(st, "%s%s", s, data)
+			return
+		}
+	}
+
+	// full tensor printing
 	for i := 0; i < t.Len(); i++ {
 		if i > 0 && i%stride == 0 {
 			data += "\n"
