@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"math"
 	"math/rand"
+	"os"
 	"reflect"
 	"runtime"
 	"testing"
@@ -997,4 +998,73 @@ func TestEndToEndInference(t *testing.T) {
 
 	expected := []int32{6, 6}
 	assert.Equal(t, expected, predictions)
+}
+
+func TestSaveAndLoadTensor(t *testing.T) {
+	tests := []struct {
+		name        string
+		shape       Shape
+		data        []float32
+		savePath    string
+		expectError bool
+	}{
+		{
+			name:        "valid tensor",
+			shape:       Shape{2, 3},
+			data:        []float32{1, 2, 3, 4, 5, 6},
+			savePath:    "/tmp/test_tensor.bin",
+			expectError: false,
+		},
+		{
+			name:        "invalid path",
+			shape:       Shape{2, 3},
+			data:        []float32{1, 2, 3, 4, 5, 6},
+			savePath:    "/nonexistent/dir/tensor.bin",
+			expectError: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Create and save tensor
+			tensor, err := MakeTensor(tt.shape, tt.data)
+			assert.NoErr(t, err)
+
+			err = tensor.Save(tt.savePath)
+			if tt.expectError {
+				assert.Error(t, err)
+				return
+			}
+			assert.NoErr(t, err)
+
+			// Load tensor
+			loaded, err := LoadTensor(tt.savePath)
+			assert.NoErr(t, err)
+
+			// Verify loaded tensor matches original
+			assert.Equal(t, tensor.Shape, loaded.Shape)
+			assert.Equal(t, tensor.dtype, loaded.dtype)
+			assert.Equal(t, tt.data, loaded.ToHost().([]float32))
+
+			// Cleanup
+			os.Remove(tt.savePath)
+		})
+	}
+
+	// Test loading from non-existent file
+	_, err := LoadTensor("/nonexistent/file.bin")
+	assert.Error(t, err)
+
+	// Test loading from invalid file
+	invalidFile := "/tmp/invalid.bin"
+	err = os.WriteFile(invalidFile, []byte("invalid data"), 0644)
+	assert.NoErr(t, err)
+	_, err = LoadTensor(invalidFile)
+	assert.Error(t, err)
+	os.Remove(invalidFile)
+
+	// Test saving unsupported dtype
+	tensor := NewTensor(Shape{2, 2}, GGML_TYPE_F64)
+	err = tensor.Save("/tmp/unsupported.bin")
+	assert.Error(t, err)
 }

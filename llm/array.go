@@ -8,8 +8,10 @@ package llm
 import "C"
 
 import (
+	"encoding/binary"
 	"fmt"
 	"math/rand"
+	"os"
 	"reflect"
 	"runtime"
 	"unsafe"
@@ -425,6 +427,97 @@ func (a *Tensor) FeedForward(norm_weight, fc_weight, out_weight *Tensor, ffl int
 
 func (a *Tensor) Predict(norm_weight, out_weight *Tensor, vocab_size int, eps float32) []int32 {
 	return a.Runner.Predict(a, norm_weight, out_weight, vocab_size, eps)
+}
+
+// Save saves the Tensor to a file as [ndims, dim1, dim2, ..., dtype, data]
+func (a *Tensor) Save(path string) error {
+	f, err := os.Create(path)
+	if err != nil {
+		return fmt.Errorf("failed to create file: %v", err)
+	}
+	defer f.Close()
+
+	ndims := int32(len(a.Shape))
+	if err := binary.Write(f, binary.LittleEndian, ndims); err != nil {
+		return fmt.Errorf("failed to write ndims: %v", err)
+	}
+
+	for _, dim := range a.Shape {
+		if err := binary.Write(f, binary.LittleEndian, int32(dim)); err != nil {
+			return fmt.Errorf("failed to write dimension: %v", err)
+		}
+	}
+
+	if err := binary.Write(f, binary.LittleEndian, int32(a.dtype)); err != nil {
+		return fmt.Errorf("failed to write dtype: %v", err)
+	}
+
+	switch a.dtype {
+	case GGML_TYPE_F32:
+		data := a.ToHost()
+		err = binary.Write(f, binary.LittleEndian, data.([]float32))
+	default:
+		return fmt.Errorf("unsupported dtype for saving: %v", a.dtype)
+	}
+
+	if err != nil {
+		return fmt.Errorf("failed to write data: %v", err)
+	}
+
+	return nil
+}
+
+// LoadTensorFrom loads a Tensor from a file written by Save
+func LoadTensor(path string) (*Tensor, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, fmt.Errorf("failed to open file: %v", err)
+	}
+	defer f.Close()
+
+	var ndims int32
+	if err := binary.Read(f, binary.LittleEndian, &ndims); err != nil {
+		return nil, fmt.Errorf("failed to read ndims: %v", err)
+	}
+
+	if ndims <= 0 || ndims > 4 {
+		return nil, fmt.Errorf("invalid number of dimensions: %v", ndims)
+	}
+
+	shape := make(Shape, ndims)
+	for i := range shape {
+		var dim int32
+		if err := binary.Read(f, binary.LittleEndian, &dim); err != nil {
+			return nil, fmt.Errorf("failed to read dimension: %v", err)
+		}
+		shape[i] = int(dim)
+	}
+
+	var dtype int32
+	if err := binary.Read(f, binary.LittleEndian, &dtype); err != nil {
+		return nil, fmt.Errorf("failed to read dtype: %v", err)
+	}
+
+	tensor := NewTensor(shape, DType(dtype))
+	size := tensor.Len()
+
+	var data any
+	switch DType(dtype) {
+	case GGML_TYPE_F32:
+		slice := make([]float32, size)
+		err = binary.Read(f, binary.LittleEndian, &slice)
+		data = slice
+	default:
+		return nil, fmt.Errorf("unsupported dtype for loading: %v", dtype)
+	}
+
+	if err != nil {
+		return nil, fmt.Errorf("failed to read data: %v", err)
+	}
+
+	tensor.ToDevice(unsafe.Pointer(reflect.ValueOf(data).Pointer()))
+
+	return tensor, nil
 }
 
 // Run array operations on the CUDA device
