@@ -565,42 +565,35 @@ __global__ void add_kernel(float* out, const float* a, const float* b, int row, 
     out4[idx] = vout;
 }
 
-__global__ void replicate_qkv_kernel(floatX *out, const floatX *inp, int batch, int row, int qNH, int kvNH, int HS)
-{
+__global__ void repeat_qkv_kernel(floatX* replicated_qkv, const floatX* gqa_qkv,
+                               int B, int N, int NH, int HD, int replicate_factor) {
+    // we have a single tensor gqa_qkv of shape (B, N, (NH + 2*(NH/replicate_factor)) * HD)
+    // we want to replicate it into (B, N, 3 * NH * HD)
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if (idx >= B * N * 3 * NH * HD) { return; }
+    int idx_flat = idx; // keep backup
 
-    if (idx >= batch * row)
-        return;
+    // decode the output index
+    int d = idx % HD;
+    idx /= HD;
+    int nh = idx % NH;
+    idx /= NH;
+    int c = idx % 3;
+    idx /= 3;
+    int n = idx % N;
+    int b = idx / N;
 
-    int b = idx / row;
-    int r = idx % row;
-
-    // Base offsets for input and output
-    const floatX* inp_row = inp + (b * row * (qNH + 2 * kvNH) * HS) + (r * (qNH + 2 * kvNH) * HS);
-    floatX* out_row = out + (b * row * (3 * qNH) * HS) + (r * (3 * qNH) * HS);
-
-    // Copy Q heads
-    memcpy(out_row, inp_row, qNH * HS * sizeof(floatX));
-
-    const floatX* k_inp = inp_row + qNH * HS;
-    const floatX* v_inp = k_inp + kvNH * HS;
-
-    floatX* k_out = out_row + qNH * HS;
-    floatX* v_out = k_out + qNH * HS;
-
-    int gNH = qNH / kvNH;
-
-    // Replicate K heads
-    #pragma unroll
-    for (int i = 0; i < gNH; i++) {
-        memcpy(k_out + i * kvNH * HS, k_inp, kvNH * HS * sizeof(floatX));
+    int inp_idx;
+    int nh_total = NH + 2 * (NH / replicate_factor);
+    if (c == 0) {
+        inp_idx = b * N * nh_total * HD + n * nh_total * HD + 0 * NH * HD + nh * HD + d;
+    } else if (c == 1) {
+        inp_idx = b * N * nh_total * HD + n * nh_total * HD + 1 * NH * HD + (nh / replicate_factor) * HD + d;
+    } else {
+        inp_idx = b * N * nh_total * HD + n * nh_total * HD + (NH * HD + (NH / replicate_factor) * HD) + (nh / replicate_factor) * HD + d;
     }
 
-    // Replicate V heads
-    #pragma unroll
-    for (int i = 0; i < gNH; i++) {
-        memcpy(v_out + i * kvNH * HS, v_inp, kvNH * HS * sizeof(floatX));
-    }
+    replicated_qkv[idx_flat] = __ldcs(&gqa_qkv[inp_idx]);
 }
 
 __global__ void get_row_kernel(float *out, const float *inp, int batch, int row, int col, int idx)
@@ -773,7 +766,7 @@ void cuda_softmax(void* output, void* input, int row, int col)
 void cuda_gq_sdpa(void *out, const void *inp, int batch, int row, int qNH, int kvNH, int HS)
 {
     void *qkv = cuda_malloc(batch * row * 3 * qNH * HS * sizeof(float));
-    cuda_replicate_qkv(qkv, inp, batch, row, qNH, kvNH, HS);
+    cuda_repeat_qkv(qkv, inp, batch, row, qNH, kvNH, HS);
     cuda_mh_sdpa(out, qkv, batch, row, qNH, HS);
     cuda_free(qkv);
 }
@@ -907,7 +900,7 @@ void cuda_mh_sdpa(void *out, const void *inp, int batch, int row, int NH, int HS
 void cuda_mq_sdpa(void *out, const void *inp, int batch, int row, int qNH, int HS)
 {
     void *qkv = cuda_malloc(batch * row * 3 * qNH * HS * sizeof(float));
-    cuda_replicate_qkv(qkv, inp, batch, row, qNH, 1, HS);
+    cuda_repeat_qkv(qkv, inp, batch, row, qNH, 1, HS);
     cuda_mh_sdpa(out, qkv, batch, row, qNH, HS);
     cuda_free(qkv);
 }
@@ -1114,12 +1107,14 @@ void cuda_group_query_attention(void *out, const void *embeds, const void *freqs
  * @param kvNH: number of K and V heads
  * @param HS: head size
  */
-void cuda_replicate_qkv(void *out, const void *inp, int batch, int row, int qNH, int kvNH, int HS)
+void cuda_repeat_qkv(void *out, const void *inp, int batch, int row, int qNH, int kvNH, int HS)
 {
     const int block_size = 256;
-    int total_threads = batch * row; // copy Q, K, V for each row
+    int total_threads = batch * row * (3 * qNH) * HS; // one thread per output element
     int num_blocks = CEIL_DIV(total_threads, block_size);
-    replicate_qkv_kernel<<<num_blocks, block_size>>>((floatX *)out, (const floatX *)inp, batch, row, qNH, kvNH, HS);
+    int replicate_factor = qNH / kvNH;
+    assert(replicate_factor > 1);
+    repeat_qkv_kernel<<<num_blocks, block_size>>>((floatX *)out, (const floatX *)inp, batch, row, qNH, HS, replicate_factor);
 }
 
 /*

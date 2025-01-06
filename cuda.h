@@ -19,7 +19,7 @@ void cuda_div(void *out, const void *a, const void *b, int row, int col);
 void cuda_dequantize(void *out, const void *inp, int row, int col, int type);
 void cuda_add(void* out, const void* a, const void* b, int row, int col);
 void cuda_group_query_attention(void *out, const void *embeds, const void *freqs, const void *norm_weight, const void *qkv_weight, const void *out_weight, int batch, int row, int NH, int kvNH, int HS, float eps, int dtype);
-void cuda_replicate_qkv(void *out, const void *inp, int batch, int row, int qNH, int kvNH, int HS);
+void cuda_repeat_qkv(void *out, const void *inp, int batch, int row, int qNH, int kvNH, int HS);
 void cuda_feed_forward(void *out, const void *attn, const void *norm_weight, const void *fc_weight, const void *out_weight, int batch, int row, int col, int ffl, float eps, int dtype);
 void cuda_get_row(void *out, const void *inp, int batch, int row, int col, int idx);
 void cuda_classify(void *out, void *ff, const void *norm_weight, const void *out_weight, int batch, int row, int col, int wsize, float eps, int dtype);

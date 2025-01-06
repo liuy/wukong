@@ -129,80 +129,49 @@ TEST(Cuda, cuda_mh_sdpa)
 
 TEST(Cuda, cuda_gq_sdpa)
 {
-    { // Case: Single element input
-        int batch = 1;
-        int row = 1;
-        int qNH = 1;
-        int kvNH = 1;
-        int HS = 1;
+	int batch = 2;
+	int row = 2;
+	int qNH = 4;
+	int kvNH = 2;
+	int HS = 2;
+	int qSize = qNH * HS;
+	int kvSize = kvNH * HS;
 
-        float inp[3] = {0.1f, 0.2f, 0.3f};
-        float out[1] = {0};
+	float inp[batch * row * (qSize + 2 * kvSize)] = {
+		// Batch 1, Row 1
+		0.1f, 0.2f, 0.3f, 0.4f, 0.5f, 0.6f, 0.7f, 0.8f, // Q (4 heads * 2 dims)
+		0.1f, 0.2f, 0.3f, 0.4f,				// K (2 heads * 2 dims)
+		0.5f, 0.6f, 0.7f, 0.8f,				// V (2 heads * 2 dims)
+		// Batch 1, Row 2
+		1.1f, 1.2f, 1.3f, 1.4f, 1.5f, 1.6f, 1.7f, 1.8f, // Q
+		0.9f, 1.0f, 1.1f, 1.2f,				// K
+		1.3f, 1.4f, 1.5f, 1.6f,				// V
+		// Batch 2, Row 1 (same pattern as batch 1)
+		0.1f, 0.2f, 0.3f, 0.4f, 0.5f, 0.6f, 0.7f, 0.8f, 0.1f, 0.2f, 0.3f, 0.4f, 0.5f, 0.6f, 0.7f, 0.8f,
+		// Batch 2, Row 2
+		1.1f, 1.2f, 1.3f, 1.4f, 1.5f, 1.6f, 1.7f, 1.8f, 0.9f, 1.0f, 1.1f, 1.2f, 1.3f, 1.4f, 1.5f, 1.6f};
 
-        float res[1] = {0.3f};
+	float out[batch * row * qSize] = {0};
 
-        void *d_out = cuda_malloc(1 * sizeof(float));
-        void *d_inp = cuda_malloc(3 * sizeof(float));
-        cuda_to_device(d_inp, inp, 3 * sizeof(float));
+	float res[batch * row * qSize] = {
+        // Batch 0
+        5.000000e-01, 6.000000e-01, 5.000000e-01, 6.000000e-01, 7.000000e-01, 8.000000e-01, 7.000000e-01, 8.000000e-01,
+        1.128813e+00, 1.228813e+00, 1.157295e+00, 1.257295e+00, 1.381927e+00, 1.481927e+00, 1.402936e+00, 1.502936e+00,
+        // Batch 1
+        5.000000e-01, 6.000000e-01, 5.000000e-01, 6.000000e-01, 7.000000e-01, 8.000000e-01, 7.000000e-01, 8.000000e-01,
+        1.128813e+00, 1.228813e+00, 1.157295e+00, 1.257295e+00, 1.381927e+00, 1.481927e+00, 1.402936e+00, 1.502936e+00,
+    };
 
-        cuda_gq_sdpa(d_out, d_inp, batch, row, qNH, kvNH, HS);
-        cuda_to_host(out, d_out, 1 * sizeof(float));
-        assert_array_eq(res, out, 1);
+	void *d_out = cuda_malloc(batch * row * qSize * sizeof(float));
+	void *d_inp = cuda_malloc(batch * row * (qSize + 2 * kvSize) * sizeof(float));
+	cuda_to_device(d_inp, inp, batch * row * (qSize + 2 * kvSize) * sizeof(float));
 
-        cuda_free(d_out);
-        cuda_free(d_inp);
-    }
+	cuda_gq_sdpa(d_out, d_inp, batch, row, qNH, kvNH, HS);
+	cuda_to_host(out, d_out, batch * row * qSize * sizeof(float));
+	assert_array_eq(res, out, batch * row * qSize);
 
-    {
-        int batch = 2;
-        int row = 2;
-        int qNH = 4;
-        int kvNH = 2;
-        int HS = 2;
-        int qSize = qNH * HS;
-        int kvSize = kvNH * HS;
-
-        float inp[batch * row * (qSize + 2*kvSize)] = {
-            // Batch 1, Row 1
-            0.1f, 0.2f, 0.3f, 0.4f, 0.5f, 0.6f, 0.7f, 0.8f,     // Q (4 heads * 2 dims)
-            0.1f, 0.2f, 0.3f, 0.4f,                             // K (2 heads * 2 dims)
-            0.5f, 0.6f, 0.7f, 0.8f,                             // V (2 heads * 2 dims)
-            // Batch 1, Row 2
-            1.1f, 1.2f, 1.3f, 1.4f, 1.5f, 1.6f, 1.7f, 1.8f,     // Q
-            0.9f, 1.0f, 1.1f, 1.2f,                             // K
-            1.3f, 1.4f, 1.5f, 1.6f,                             // V
-            // Batch 2, Row 1 (same pattern as batch 1)
-            0.1f, 0.2f, 0.3f, 0.4f, 0.5f, 0.6f, 0.7f, 0.8f,
-            0.1f, 0.2f, 0.3f, 0.4f,
-            0.5f, 0.6f, 0.7f, 0.8f,
-            // Batch 2, Row 2
-            1.1f, 1.2f, 1.3f, 1.4f, 1.5f, 1.6f, 1.7f, 1.8f,
-            0.9f, 1.0f, 1.1f, 1.2f,
-            1.3f, 1.4f, 1.5f, 1.6f
-        };
-
-        float out[batch * row * qSize] = {0};
-
-        float res[batch * row * qSize] = {
-            // Batch 0
-            0.500000f, 0.600000f, 0.700000f, 0.800000f, 0.500000f, 0.600000f, 0.700000f, 0.800000f,
-            1.128813f, 1.228813f, 1.357295f, 1.457295f, 1.181927f, 1.281927f, 1.402936f, 1.502936f,
-            // Batch 1
-            0.500000f, 0.600000f, 0.700000f, 0.800000f, 0.500000f, 0.600000f, 0.700000f, 0.800000f,
-            1.128813f, 1.228813f, 1.357295f, 1.457295f, 1.181927f, 1.281927f, 1.402936f, 1.502936f
-        };
-
-        void *d_out = cuda_malloc(batch * row * qSize * sizeof(float));
-        void *d_inp = cuda_malloc(batch * row * (qSize + 2*kvSize) * sizeof(float));
-        cuda_to_device(d_inp, inp, batch * row * (qSize + 2*kvSize) * sizeof(float));
-
-        cuda_gq_sdpa(d_out, d_inp, batch, row, qNH, kvNH, HS);
-        cuda_to_host(out, d_out, batch * row * qSize * sizeof(float));
-        assert_array_eq(res, out, batch * row * qSize);
-
-        cuda_free(d_out);
-        cuda_free(d_inp);
-    }
+	cuda_free(d_out);
+	cuda_free(d_inp);
 }
 
 TEST(Cuda, cuda_mq_sdpa)
@@ -838,7 +807,7 @@ TEST(Cuda, cuda_group_query_attention)
     cuda_free(d_qkv_weight);
 }
 
-TEST(Cuda, cuda_replicate_qkv)
+TEST(Cuda, cuda_repeat_qkv)
 {
     int batch = 2;
     int row = 2;
@@ -869,28 +838,28 @@ TEST(Cuda, cuda_replicate_qkv)
 
     float res[batch * row * 3 * qNH * HS] = {
         // Batch 1, Row 1
-        0.1f, 0.2f, 0.3f, 0.4f, 0.5f, 0.6f, 0.7f, 0.8f,     // Q
-        0.1f, 0.2f, 0.3f, 0.4f, 0.1f, 0.2f, 0.3f, 0.4f,     // K replicated
-        0.5f, 0.6f, 0.7f, 0.8f, 0.5f, 0.6f, 0.7f, 0.8f,     // V replicated
+        1.000000e-01, 2.000000e-01, 3.000000e-01, 4.000000e-01, 5.000000e-01, 6.000000e-01, 7.000000e-01, 8.000000e-01,     // Q
+        1.000000e-01, 2.000000e-01, 1.000000e-01, 2.000000e-01, 3.000000e-01, 4.000000e-01, 3.000000e-01, 4.000000e-01,     // K replicated
+        5.000000e-01, 6.000000e-01, 5.000000e-01, 6.000000e-01, 7.000000e-01, 8.000000e-01, 7.000000e-01, 8.000000e-01,     // V replicated
         // Batch 1, Row 2
-        1.1f, 1.2f, 1.3f, 1.4f, 1.5f, 1.6f, 1.7f, 1.8f,     // Q
-        0.9f, 1.0f, 1.1f, 1.2f, 0.9f, 1.0f, 1.1f, 1.2f,     // K replicated
-        1.3f, 1.4f, 1.5f, 1.6f, 1.3f, 1.4f, 1.5f, 1.6f,     // V replicated
+        1.100000e+00, 1.200000e+00, 1.300000e+00, 1.400000e+00, 1.500000e+00, 1.600000e+00, 1.700000e+00, 1.800000e+00,     // Q
+        9.000000e-01, 1.000000e+00, 9.000000e-01, 1.000000e+00, 1.100000e+00, 1.200000e+00, 1.100000e+00, 1.200000e+00,     // K replicated
+        1.300000e+00, 1.400000e+00, 1.300000e+00, 1.400000e+00, 1.500000e+00, 1.600000e+00, 1.500000e+00, 1.600000e+00,     // V replicated
         // Batch 2, Row 1
-        0.1f, 0.2f, 0.3f, 0.4f, 0.5f, 0.6f, 0.7f, 0.8f,     // Q
-        0.1f, 0.2f, 0.3f, 0.4f, 0.1f, 0.2f, 0.3f, 0.4f,     // K replicated
-        0.5f, 0.6f, 0.7f, 0.8f, 0.5f, 0.6f, 0.7f, 0.8f,     // V replicated
+        1.000000e-01, 2.000000e-01, 3.000000e-01, 4.000000e-01, 5.000000e-01, 6.000000e-01, 7.000000e-01, 8.000000e-01,     // Q
+        1.000000e-01, 2.000000e-01, 1.000000e-01, 2.000000e-01, 3.000000e-01, 4.000000e-01, 3.000000e-01, 4.000000e-01,     // K replicated
+        5.000000e-01, 6.000000e-01, 5.000000e-01, 6.000000e-01, 7.000000e-01, 8.000000e-01, 7.000000e-01, 8.000000e-01,     // V replicated
         // Batch 2, Row 2
-        1.1f, 1.2f, 1.3f, 1.4f, 1.5f, 1.6f, 1.7f, 1.8f,     // Q
-        0.9f, 1.0f, 1.1f, 1.2f, 0.9f, 1.0f, 1.1f, 1.2f,     // K replicated
-        1.3f, 1.4f, 1.5f, 1.6f, 1.3f, 1.4f, 1.5f, 1.6f      // V replicated
+        1.100000e+00, 1.200000e+00, 1.300000e+00, 1.400000e+00, 1.500000e+00, 1.600000e+00, 1.700000e+00, 1.800000e+00,     // Q
+        9.000000e-01, 1.000000e+00, 9.000000e-01, 1.000000e+00, 1.100000e+00, 1.200000e+00, 1.100000e+00, 1.200000e+00,     // K replicated
+        1.300000e+00, 1.400000e+00, 1.300000e+00, 1.400000e+00, 1.500000e+00, 1.600000e+00, 1.500000e+00, 1.600000e+00      // V replicated
     };
 
     void *d_out = cuda_malloc(batch * row * 3 * qNH * HS * sizeof(float));
     void *d_inp = cuda_malloc(batch * row * (qNH + 2 * kvNH) * HS * sizeof(float));
     cuda_to_device(d_inp, inp, batch * row * (qNH + 2 * kvNH) * HS * sizeof(float));
 
-    cuda_replicate_qkv(d_out, d_inp, batch, row, qNH, kvNH, HS);
+    cuda_repeat_qkv(d_out, d_inp, batch, row, qNH, kvNH, HS);
     cuda_to_host(out, d_out, batch * row * 3 * qNH * HS * sizeof(float));
     assert_array_eq(res, out, batch * row * 3 * qNH * HS);
 
