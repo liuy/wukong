@@ -208,6 +208,47 @@ static inline void _printm(const char *name, float* matrix, int batch, int row, 
 
 #define printm(mat, batch, row, col) _printm(#mat, mat, batch, row, col)
 
+static inline void _printc(const char *name, float* matrix, int batch, int row, int col, int c)
+{
+    printf("Column %d of %s[%d:%d:%d]:\n", c, name, batch, row, col);
+    if (c < 0)
+        c += col;
+    if (c >= col)
+        c %= col;
+
+    for (int b = 0; b < batch; ++b) {
+        printf("Batch %d:\n", b);
+        for (int r = 0; r < row; ++r) {
+            int index = b * row * col + r * col + c;
+            printf("%e \n", matrix[index]);
+        }
+        printf("\n");
+    }
+    fflush(stdout);
+}
+
+static inline void _printr(const char *name, float* matrix, int batch, int row, int col, int r)
+{
+    printf("Row %d of %s[%d:%d:%d]:\n", r, name, batch, row, col);
+    if (r < 0)
+        r += row;
+    if (r >= row)
+        r %= row;
+
+    for (int b = 0; b < batch; ++b) {
+        printf("Batch %d:\n", b);
+        for (int c = 0; c < col; ++c) {
+            int index = b * row * col + r * col + c;
+            printf("%e ", matrix[index]);
+        }
+        printf("\n");
+    }
+    fflush(stdout);
+}
+
+#define printc(mat, batch, row, col, c) _printc(#mat, mat, batch, row, col, c)
+#define printr(mat, batch, row, col, r) _printr(#mat, mat, batch, row, col, r)
+
 extern "C" {
     #include "cuda.h"
 }
