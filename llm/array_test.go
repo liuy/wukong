@@ -1068,3 +1068,35 @@ func TestSaveAndLoadTensor(t *testing.T) {
 	err = tensor.Save("/tmp/unsupported.bin")
 	assert.Error(t, err)
 }
+func TestTensorGetElem(t *testing.T) {
+	tests := []struct {
+		shape    Shape
+		data     []float32
+		index    int
+		expected float32
+	}{
+		{Shape{2, 3}, []float32{1.0, 2.0, 3.0, 4.0, 5.0, 6.0}, 0, 1.0},
+		{Shape{2, 3}, []float32{1.0, 2.0, 3.0, 4.0, 5.0, 6.0}, 5, 6.0},
+		{Shape{2, 3}, []float32{1.0, 2.0, 3.0, 4.0, 5.0, 6.0}, -1, 6.0},
+		{Shape{2, 3}, []float32{1.0, 2.0, 3.0, 4.0, 5.0, 6.0}, -6, 1.0},
+	}
+
+	for _, tt := range tests {
+		a, err := MakeTensor(tt.shape, tt.data)
+		assert.NoErr(t, err)
+		result := a.GetElem(tt.index)
+		assert.Equal(t, tt.expected, result)
+	}
+
+	assert.Panic(t, func() {
+		a, err := MakeTensor(Shape{2, 3}, []float32{1.0, 2.0, 3.0, 4.0, 5.0, 6.0})
+		assert.NoErr(t, err)
+		a.GetElem(6)
+	})
+
+	assert.Panic(t, func() {
+		a, err := MakeTensor(Shape{2, 3}, []float32{1.0, 2.0, 3.0, 4.0, 5.0, 6.0})
+		assert.NoErr(t, err)
+		a.GetElem(-7)
+	})
+}

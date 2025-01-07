@@ -429,6 +429,24 @@ func (a *Tensor) Predict(norm_weight, out_weight *Tensor, vocab_size int, eps fl
 	return a.Runner.Predict(a, norm_weight, out_weight, vocab_size, eps)
 }
 
+func (a *Tensor) GetElem(idx int) float32 {
+	if idx < 0 {
+		idx += a.Len()
+	}
+	if idx < 0 || idx >= a.Len() {
+		panic(fmt.Sprintf("index %d out of range", idx))
+	}
+	es := a.ElemTypeSize() / a.ElemBlockSize()
+	switch a.dtype {
+	case GGML_TYPE_F32:
+		var d float32
+		C.cuda_to_host(unsafe.Pointer(&d), unsafe.Pointer(uintptr(a.dptr)+uintptr(idx*es)), C.size_t(es))
+		return d
+	default:
+		panic(fmt.Sprintf("unsupported dtype %v", a.dtype))
+	}
+}
+
 // Save saves the Tensor to a file as [ndims, dim1, dim2, ..., dtype, data]
 func (a *Tensor) Save(path string) error {
 	f, err := os.Create(path)

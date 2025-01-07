@@ -108,7 +108,6 @@ func get_freqs_array(HS int, theta float32) *Tensor {
 func (m *Llama3Handler) Setup(pred *Predictor) error {
 	w := pred.Tensors["rope_freqs.weight"]
 	freqs := get_freqs_array(int(pred.HeadDim), pred.RopeTheta)
-	// Apply rope scaling as GGUF just pre-calculates the scale factors
 	freqs.DivInPlace(w)
 	pred.Tensors["rope_freqs.weight"] = freqs
 	w.DeviceFree()
