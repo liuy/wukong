@@ -105,11 +105,29 @@ func get_freqs_array(HS int, theta float32) *Tensor {
 	return f
 }
 
+func makeFreqsTensor(factor *Tensor, HS int, cxtlen int, theta float32) *Tensor {
+	freqs_cis := make([]float32, HS*cxtlen)
+	for i := 0; i < HS/2; i++ {
+		freq := 1.0 / float32(math.Pow(float64(theta), float64(2*i)/float64(HS)))
+		freq /= factor.GetElem(i) // apply scaling factor calculated by gguf
+
+		for j := 0; j < cxtlen; j++ {
+			angle := float32(j) * freq
+			freqs_cis[j*HS+2*i] = float32(math.Cos(float64(angle)))
+			freqs_cis[j*HS+2*i+1] = float32(math.Sin(float64(angle)))
+		}
+	}
+	t, err := MakeTensor(Shape{cxtlen, HS}, freqs_cis)
+	if err != nil {
+		panic(err)
+	}
+	return t
+}
+
 func (m *Llama3Handler) Setup(pred *Predictor) error {
 	w := pred.Tensors["rope_freqs.weight"]
-	freqs := get_freqs_array(int(pred.HeadDim), pred.RopeTheta)
-	freqs.DivInPlace(w)
-	pred.Tensors["rope_freqs.weight"] = freqs
+	freqs_cis := makeFreqsTensor(w, int(pred.HeadDim), int(pred.ContextLen), pred.RopeTheta)
+	pred.Tensors["rope_freqs.weight"] = freqs_cis
 	w.DeviceFree()
 
 	output := pred.Tensors["output.weight"]
@@ -168,7 +186,8 @@ func (m *Llama3Handler) Predict(pred *Predictor, toks [][]int32) ([]int32, error
 	if err != nil {
 		return nil, err
 	}
-	freqs := pred.Tensors["rope_freqs.weight"]
+	freqs_cis := pred.Tensors["rope_freqs.weight"]
+	freqs := freqs_cis.RowSlice(0, seqs)
 	for i := uint32(0); i < pred.NumHidden; i++ {
 		qkv := pred.Tensors["blk."+strconv.Itoa(int(i))+".attn_qkv.weight"]
 		attn_norm := pred.Tensors["blk."+strconv.Itoa(int(i))+".attn_norm.weight"]

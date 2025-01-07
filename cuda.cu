@@ -363,7 +363,7 @@ __global__ void swiglu_kernel(floatX* out, const floatX* inp, int B, int T, int 
     }
 }
 
-__global__ void rope_qkv_kernel(floatX* out, const floatX* inp, const floatX* raw_freqs,
+__global__ void rope_qkv_kernel(floatX* out, const floatX* inp, const floatX* freqs,
                                 int batch, int row, int NH, int kvNH, int HS)
 {
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
@@ -379,10 +379,9 @@ __global__ void rope_qkv_kernel(floatX* out, const floatX* inp, const floatX* ra
     int h = (idx / HS_half) % total_heads;
     int d = idx % HS_half;
 
-    float freq = raw_freqs[d];
-    float angle = r * freq;
-    float c = cosf(angle);
-    float s = sinf(angle);
+    int freq_idx = r * HS + 2 * d;
+    float c = freqs[freq_idx];
+    float s = freqs[freq_idx + 1];
 
     int base = b * (row * (NH + 2 * kvNH) * HS) + r * ((NH + 2 * kvNH) * HS) + h * HS + 2 * d;
     float x_real = inp[base];
@@ -392,7 +391,7 @@ __global__ void rope_qkv_kernel(floatX* out, const floatX* inp, const floatX* ra
     out[base + 1] = x_real * s + x_imag * c;
 }
 
-__global__ void rope_kernel(floatX *out, const floatX *inp, const floatX *raw_freqs, int B, int T, int NH, int HS)
+__global__ void rope_kernel(floatX *out, const floatX *inp, const floatX *freqs, int B, int T, int NH, int HS)
 {
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
     int HS_half = HS / 2;
@@ -409,7 +408,7 @@ __global__ void rope_kernel(floatX *out, const floatX *inp, const floatX *raw_fr
     int idxi = idx_bth + 2 * d; // index in the input
 
     // fetch and compute frequency
-    float freq = raw_freqs[d];
+    float freq = freqs[d];
     float angle = t * freq;
     float freqs_cos = cosf(angle);
     float freqs_sin = sinf(angle);
@@ -917,13 +916,13 @@ void cuda_mq_sdpa(void *out, const void *inp, int batch, int row, int qNH, int H
  * @param kvNH: number of key/value heads
  * @param HS: head size
  */
-void cuda_rope_qkv(void *out, const void *inp, const void *raw_freqs, int batch, int row, int NH, int kvNH, int HS)
+void cuda_rope_qkv(void *out, const void *inp, const void *freqs, int batch, int row, int NH, int kvNH, int HS)
 {
     int block_size = 256;
     // We only need threads for Q and K sections, V will be untouched
     int total_threads = batch * row * (NH + kvNH) * HS / 2;
     int num_blocks = CEIL_DIV(total_threads, block_size);
-    rope_qkv_kernel<<<num_blocks, block_size>>>((floatX *)out, (const floatX *)inp, (const floatX *)raw_freqs,
+    rope_qkv_kernel<<<num_blocks, block_size>>>((floatX *)out, (const floatX *)inp, (const floatX *)freqs,
                                                batch, row, NH, kvNH, HS);
     cuda_check(cudaGetLastError());
 }
@@ -933,18 +932,18 @@ void cuda_rope_qkv(void *out, const void *inp, const void *raw_freqs, int batch,
  *
  * @param out: output matrix(batch, row, NH, HS)
  * @param inp: input matrix(batch, row, NH, HS)
- * @raw_freqs: raw frequency tensor to compute the rotation angle (HS/2)
+ * @freqs: raw frequency tensor to compute the rotation angle (HS/2)
  * @param batch: batch size
  * @param row: row size
  * @param NH: number of heads
  * @param HS: head size
  */
-void cuda_rope(void *out, const void *inp, const void *raw_freqs, int batch, int row, int NH, int HS)
+void cuda_rope(void *out, const void *inp, const void *freqs, int batch, int row, int NH, int HS)
 {
     int block_size = 256;
     int total_threads = batch * row * NH * HS / 2;  // divided by 2 since we process pairs
     int num_blocks = CEIL_DIV(total_threads, block_size);
-    rope_kernel<<<num_blocks, block_size>>>((floatX *)out, (const floatX *)inp, (const floatX *)raw_freqs, batch, row, NH, HS);
+    rope_kernel<<<num_blocks, block_size>>>((floatX *)out, (const floatX *)inp, (const floatX *)freqs, batch, row, NH, HS);
     cuda_check(cudaGetLastError());
 }
 

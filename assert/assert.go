@@ -97,7 +97,7 @@ func Equal(t TB, expected, actual any) {
 	t.Helper()
 	if !reflect.DeepEqual(expected, actual) {
 		_, file, line, _ := runtime.Caller(1)
-		t.Errorf("\n%s:%d\nExpected: %#v\nGot: %#v", file, line, expected, actual)
+		t.Errorf("\n%s:%d\nExpected:\n%#v\nGot:\n%#v", file, line, expected, actual)
 	}
 }
 

@@ -402,9 +402,10 @@ TEST(Cuda, cuda_rope_qkv)
         1.3f, 1.4f, 1.5f, 1.6f, // q
         1.7f, 1.8f, 1.9f, 2.0f, // k,v
     };
-    float fc[HS/2] = {0};
-    float fc_res[HS/2] = {
-        1.000000f,
+    float fc[row * HS] = {0};
+    float fc_res[row * HS] = {
+        1.000000e+00, 0.000000e+00,
+        5.403023e-01, 8.414710e-01
     };
     float out[batch * row * (NH + 2*kvNH) * HS] = {0};
     float res[batch * row * (NH + 2*kvNH) * HS] = {
@@ -414,14 +415,14 @@ TEST(Cuda, cuda_rope_qkv)
         -0.596134f, 2.403045f, 1.900000f, 2.000000f
     };
 
-    get_freqs(fc, HS, 10000.0f);
-    assert_array_eq(fc_res, fc, HS / 2);
+    get_freqs_cis(fc, HS, row, 10000.0f, true);
+    assert_array_eq(fc_res, fc, HS * row);
 
     void *d_qkv = cuda_malloc(batch * row * 3 * NH * HS * sizeof(float));
-    void *d_fc = cuda_malloc(HS / 2 * sizeof(float));
+    void *d_fc = cuda_malloc(HS * row * sizeof(float));
 
     cuda_to_device(d_qkv, qkv, batch * row * (NH + 2*kvNH) * HS * sizeof(float));
-    cuda_to_device(d_fc, fc, HS / 2 * sizeof(float));
+    cuda_to_device(d_fc, fc, HS * row * sizeof(float));
     cuda_rope_qkv(d_qkv, d_qkv, d_fc, batch, row, NH, kvNH, HS); // update qkv in-place
     cuda_to_host(out, d_qkv, batch * row * (NH + 2*kvNH) * HS * sizeof(float));
     assert_array_eq(res, out, batch * row * (NH + 2*kvNH) * HS);
@@ -441,8 +442,10 @@ TEST(Cuda, cuda_rope_qkv)
         1.7f, 1.8f, 1.9f, 2.0f, // k
         2.1f, 2.2f, 2.3f, 2.4f, // v
     };
-    float fc_res2[HS/2] = {
-        1.000000f, 0.010000f,
+    float fc2[row * HS] = {0};
+    float fc_res2[HS * row] = {
+        1.000000e+00, 0.000000e+00, 1.000000e+00, 0.000000e+00,
+        5.403023e-01, 8.414710e-01, 9.999500e-01, 9.999833e-03
     };
     float res2[batch * row * 3 * NH * HS] = {
         0.100000f, 0.200000f, 0.300000f, 0.400000f,
@@ -452,12 +455,12 @@ TEST(Cuda, cuda_rope_qkv)
         -0.596134f, 2.403045f, 1.879905f, 2.018900f,
         2.100000f, 2.200000f, 2.300000f, 2.400000f
     };
-    get_freqs(fc, HS, 10000.0f);
-    assert_array_eq(fc_res2, fc, HS / 2);
+    get_freqs_cis(fc2, HS, row, 10000.0f, true);
+    assert_array_eq(fc_res2, fc2, HS * row);
     d_qkv = cuda_malloc(batch * row * 3 * NH * HS * sizeof(float));
-    d_fc = cuda_malloc(HS / 2 * sizeof(float));
+    d_fc = cuda_malloc(HS * row * sizeof(float));
     cuda_to_device(d_qkv, qkv2, batch * row * 3 * NH * HS * sizeof(float));
-    cuda_to_device(d_fc, fc, HS / 2 * sizeof(float));
+    cuda_to_device(d_fc, fc2, HS * row * sizeof(float));
     cuda_rope_qkv(d_qkv, d_qkv, d_fc, batch, row, NH, kvNH, HS); // update qkv in-place
     cuda_to_host(out, d_qkv, batch * row * 3 * NH * HS * sizeof(float));
     assert_array_eq(res2, out, batch * row * 3 * NH * HS);
@@ -740,7 +743,10 @@ TEST(Cuda, cuda_group_query_attention)
         0.007f, -0.008f, 0.009f, -0.001f, 0.002f, -0.003f, 0.004f, -0.005f
     };
 
-    float freqs[HS / 2] = {1.0f, 0.01f};
+    float freqs[HS * row] = {
+        1.000000e+00, 0.000000e+00, 1.000000e+00, 0.000000e+00,
+        5.403023e-01, 8.414710e-01, 9.999500e-01, 9.999833e-03
+    };
 
     float norm_weight[col] = {
         0.1f, 0.2f, 0.1f, 0.2f, 0.3f, 0.6f, 0.7f, 0.4f
@@ -777,13 +783,13 @@ TEST(Cuda, cuda_group_query_attention)
     };
 
     void *d_embeds = cuda_malloc(batch * row * col * sizeof(float));
-    void *d_freqs = cuda_malloc(HS / 2 * sizeof(float));
+    void *d_freqs = cuda_malloc(HS * row * sizeof(float));
     void *d_out_weight = cuda_malloc(col * col * sizeof(float));
     void *d_norm_weight = cuda_malloc(col * sizeof(float));
     void *d_qkv_weight = cuda_malloc(qkv_weight_row * col * sizeof(float));
 
     cuda_to_device(d_embeds, embeds, batch * row * col * sizeof(float));
-    cuda_to_device(d_freqs, freqs, HS / 2 * sizeof(float));
+    cuda_to_device(d_freqs, freqs, HS * row * sizeof(float));
     cuda_to_device(d_out_weight, out_weight, col * col * sizeof(float));
     cuda_to_device(d_norm_weight, norm_weight, col * sizeof(float));
     cuda_to_device(d_qkv_weight, qkv_weight, qkv_weight_row * col * sizeof(float));

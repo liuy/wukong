@@ -11,8 +11,8 @@ void cuda_gq_sdpa(void *out, const void *inp, int batch, int row, int qNH, int k
 void cuda_mq_sdpa(void *out, const void *inp, int batch, int row, int qNH, int HS);
 void cuda_rmsnorm(void *out, const void *inp, const void *weight, int row, int col, float eps);
 void cuda_swiglu(void *out, const void *inp, int batch, int row, int col);
-void cuda_rope_qkv(void *out, const void *inp, const void *raw_freqs, int batch, int row, int NH, int kvNH, int HS);
-void cuda_rope(void *out, const void *inp, const void *raw_freqs, int batch, int row, int NH, int HS);
+void cuda_rope_qkv(void *out, const void *inp, const void *freqs, int batch, int row, int NH, int kvNH, int HS);
+void cuda_rope(void *out, const void *inp, const void *freqs, int batch, int row, int NH, int HS);
 void cuda_embedding(void* out, const void *inp, const void *embd, int batch, int row, int col, int dtype);
 void cuda_cat(void *out, const void *a, const void *b, int arow, int brow, int col, int dtype);
 void cuda_div(void *out, const void *a, const void *b, int row, int col);

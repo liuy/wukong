@@ -761,7 +761,7 @@ func (r *cudaRunner) GroupQueryAttention(embeds, freqs, norm_weight, qkv_weight,
 	row := embeds.GetDim(-2)
 	batch := 1
 
-	if freqs.NumDims() != 1 || freqs.GetDim(0) != HS/2 {
+	if freqs.GetDim(0) != row || freqs.GetDim(1) != HS {
 		return fmt.Errorf("bad freqs shape %v", freqs.Shape)
 	}
 	if norm_weight.NumDims() != 1 || norm_weight.GetDim(0) != col {
