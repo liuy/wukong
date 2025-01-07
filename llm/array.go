@@ -447,6 +447,29 @@ func (a *Tensor) GetElem(idx int) float32 {
 	}
 }
 
+// SliceRow returns a new Tensor that is a slice *view* of the original Tensor along the last dimension
+func (a *Tensor) RowSlice(start, end int) *Tensor {
+	if a.NumDims() != 2 {
+		panic("only 2D tensor is supported")
+	}
+	if start < 0 {
+		start += a.GetDim(0)
+	}
+	if end < 0 {
+		end += a.GetDim(0)
+	}
+	if start < 0 || start >= a.GetDim(0) || end < 0 || end > a.GetDim(0) {
+		panic(fmt.Sprintf("slice index out of range: %d, %d", start, end))
+	}
+	if start >= end {
+		panic(fmt.Sprintf("invalid slice range: %d, %d", start, end))
+	}
+	t := NewTensor(Shape{end - start, a.GetDim(1)}, a.dtype)
+	t.dptr = unsafe.Pointer(uintptr(a.dptr) + uintptr(start*a.GetDim(1)*a.ElemTypeSize()/a.ElemBlockSize()))
+	runtime.SetFinalizer(t, nil) // RowSlice is just a view, no need to free memory
+	return t
+}
+
 // Save saves the Tensor to a file as [ndims, dim1, dim2, ..., dtype, data]
 func (a *Tensor) Save(path string) error {
 	f, err := os.Create(path)

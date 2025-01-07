@@ -1100,3 +1100,76 @@ func TestTensorGetElem(t *testing.T) {
 		a.GetElem(-7)
 	})
 }
+func TestTensorRowSlice(t *testing.T) {
+	tests := []struct {
+		shape       Shape
+		data        []float32
+		start, end  int
+		expected    []float32
+		expectPanic bool
+	}{
+		{
+			shape:    Shape{4, 3},
+			data:     []float32{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12},
+			start:    1,
+			end:      3,
+			expected: []float32{4, 5, 6, 7, 8, 9},
+		},
+		{
+			shape:    Shape{4, 3},
+			data:     []float32{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12},
+			start:    -3,
+			end:      -1,
+			expected: []float32{4, 5, 6, 7, 8, 9},
+		},
+		{
+			shape:       Shape{4, 3},
+			data:        []float32{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12},
+			start:       3,
+			end:         1,
+			expectPanic: true,
+		},
+		{
+			shape:       Shape{4, 3},
+			data:        []float32{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12},
+			start:       1,
+			end:         5,
+			expectPanic: true,
+		},
+		{
+			shape:       Shape{4, 3},
+			data:        []float32{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12},
+			start:       -5,
+			end:         2,
+			expectPanic: true,
+		},
+		{
+			shape:       Shape{4, 3},
+			data:        []float32{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12},
+			start:       1,
+			end:         -5,
+			expectPanic: true,
+		},
+		{
+			shape:       Shape{3, 3, 3},
+			data:        []float32{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27},
+			start:       1,
+			end:         2,
+			expectPanic: true,
+		},
+	}
+
+	for _, tt := range tests {
+		a, err := MakeTensor(tt.shape, tt.data)
+		assert.NoErr(t, err)
+
+		if tt.expectPanic {
+			assert.Panic(t, func() { a.RowSlice(tt.start, tt.end) })
+			continue
+		}
+
+		result := a.RowSlice(tt.start, tt.end)
+		assert.Equal(t, Shape{tt.end - tt.start, tt.shape[1]}, result.Shape)
+		assert.Equal(t, tt.expected, result.ToHost())
+	}
+}
