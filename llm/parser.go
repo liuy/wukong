@@ -185,6 +185,7 @@ func GGUFParser(filename string) (*GGUFFile, error) {
 			return nil, fmt.Errorf("failed to read tensor info %d: %w", i, err)
 		}
 		gguf.TensorInfos[name] = info
+		// fmt.Printf("Tensor name: %s, shape: %v, dtype: %v\n", name, info.Dims, info.Type)
 	}
 
 	gguf.Offset = file.AlignOffset(gguf.Alignment)
@@ -520,7 +521,7 @@ func (g *GGUFFile) GetTokenizer() *Tokenizer {
 func loadTensors(file *mmapReader, g *GGUFFile) map[string]*Tensor {
 	tensors := make(map[string]*Tensor, len(g.TensorInfos))
 	for name, info := range g.TensorInfos {
-		// fmt.Printf("name: %s, shape: %v, dtype: %v\n", name, shape, info.Type)
+		// fmt.Printf("name: %s, shape: %v, dtype: %v\n", name, info.Dims, info.Type)
 		p, err := file.PointerAt(int64(info.Offset) + g.Offset)
 		if err != nil {
 			return nil
@@ -535,9 +536,9 @@ func loadTensors(file *mmapReader, g *GGUFFile) map[string]*Tensor {
 	return tensors
 }
 
-func (g *GGUFFile) GetConfig() *Config {
+func (g *GGUFFile) GetPredictor() *Predictor {
 	arch := g.KVs["general.architecture"].(string)
-	conf := &Config{
+	pred := &Predictor{
 		Arch:       arch,
 		ContextLen: g.KVs[arch+".context_length"].(uint32),
 		NumHidden:  g.KVs[arch+".block_count"].(uint32),
@@ -550,12 +551,14 @@ func (g *GGUFFile) GetConfig() *Config {
 	if eps == nil {
 		eps = g.KVs[arch+".attention.layer_norm_epsilon"]
 	}
-	conf.NormEpsilon = eps.(float32)
+	pred.NormEpsilon = eps.(float32)
 
-	conf.HeadDim = conf.EmbedDim / conf.NumHead
-	conf.NumKVHead = conf.NumHead
+	pred.HeadDim = pred.EmbedDim / pred.NumHead
+	pred.NumKVHead = pred.NumHead
 	if kvh := g.KVs[arch+".attention.head_count_kv"]; kvh != nil {
-		conf.NumKVHead = kvh.(uint32)
+		pred.NumKVHead = kvh.(uint32)
 	}
-	return conf
+	pred.Tensors = g.Tensors
+	pred.PredicHandler = &Llama3Handler{}
+	return pred
 }

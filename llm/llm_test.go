@@ -104,12 +104,22 @@ func TestGGUFParser(t *testing.T) {
 	assert.Equal(t, expected, ids2)
 }
 
-func TestGGUFGetConfig(t *testing.T) {
+func TestGGUFGetPredictor(t *testing.T) {
 	m, err := NewModel("test_data/llama3.2-3b.gguf")
 	if err != nil {
 		t.Skip("llama3.2-3b.gguf: ", err)
 	}
-	assert.Equal(t, &Config{"llama", 131072, 28, 8192, 128, 24, 8, 3072, 1e-05, 500000}, m.Config)
+	assert.Equal(t, "llama", m.Arch)
+	assert.Equal(t, uint32(131072), m.ContextLen)
+	assert.Equal(t, uint32(28), m.NumHidden)
+	assert.Equal(t, uint32(8192), m.FeedFWDLen)
+	assert.Equal(t, uint32(128), m.HeadDim)
+	assert.Equal(t, uint32(24), m.NumHead)
+	assert.Equal(t, uint32(8), m.NumKVHead)
+	assert.Equal(t, uint32(3072), m.EmbedDim)
+	assert.Equal(t, float32(1e-05), m.NormEpsilon)
+	assert.Equal(t, float32(500000), m.RopeTheta)
+
 	text := "你好，World!"
 	ids := m.Encode(text)
 	assert.Equal(t, m.Decode(ids), text)
@@ -128,7 +138,8 @@ func TestGGUFGetConfig(t *testing.T) {
 			"llama.feed_forward_length":          uint32(8192),
 		},
 	}
-	assert.Equal(t, g.GetConfig(), m.Config)
+	p := g.GetPredictor()
+	assert.Equal(t, p.NormEpsilon, m.NormEpsilon)
 }
 
 func BenchmarkGGUFParser(b *testing.B) {
@@ -385,4 +396,17 @@ func TestMmapReader(t *testing.T) {
 		_, err := MmapOpen("nonexistent.file")
 		assert.Error(t, err)
 	})
+}
+
+func TestModelGenerate(t *testing.T) {
+	m, err := NewModel("test_data/llama3.2-1b-f32.gguf")
+	if err != nil {
+		t.Skip("llama3.2-3b.gguf: ", err)
+	}
+	m.Setup()
+	message := map[string]string{
+		"system": "You are a helpful assistant",
+		"user":   "What is the capital of China?",
+	}
+	m.Generate(message)
 }

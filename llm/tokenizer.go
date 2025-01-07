@@ -10,10 +10,10 @@ import (
 	"strings"
 )
 
-type ModelHandler interface {
+type TokenHandler interface {
 	Initialize(t *Tokenizer, toks map[string]int32)
-	EncodeHeader(t *Tokenizer, message map[string]string) []int32
-	EncodeContent(t *Tokenizer, message map[string]string) []int32
+	EncodeHeader(t *Tokenizer, message string) []int32
+	EncodeMessage(t *Tokenizer, message map[string]string) []int32
 }
 
 type Tokenizer struct {
@@ -27,12 +27,12 @@ type Tokenizer struct {
 	EotId     int32
 	PadId     int32
 	UnknownId int32
-	ModelHandler
+	TokenHandler
 }
 
-func NewTokenizer(tokens map[string]int32, m ModelHandler) *Tokenizer {
+func NewTokenizer(tokens map[string]int32, m TokenHandler) *Tokenizer {
 	tokenizer := &Tokenizer{}
-	tokenizer.ModelHandler = m
+	tokenizer.TokenHandler = m
 	tokenizer.Initialize(tokens)
 	return tokenizer
 }
@@ -200,14 +200,14 @@ func (t *Tokenizer) Decode(ids []int32) string {
 	return sb.String()
 }
 
-func (t *Tokenizer) EncodeHeader(message map[string]string) []int32 {
-	return t.ModelHandler.EncodeHeader(t, message)
+func (t *Tokenizer) EncodeHeader(role string) []int32 {
+	return t.TokenHandler.EncodeHeader(t, role)
 }
 
-func (t *Tokenizer) EncodeContent(message map[string]string) []int32 {
-	return t.ModelHandler.EncodeContent(t, message)
+func (t *Tokenizer) EncodeMessage(message map[string]string) []int32 {
+	return t.TokenHandler.EncodeMessage(t, message)
 }
 
 func (t *Tokenizer) Initialize(toks map[string]int32) {
-	t.ModelHandler.Initialize(t, toks)
+	t.TokenHandler.Initialize(t, toks)
 }

@@ -719,6 +719,20 @@ func (r *cudaRunner) GroupQueryAttention(embeds, freqs, norm_weight, qkv_weight,
 	HS := col / NH
 	row := embeds.GetDim(-2)
 	batch := 1
+
+	if freqs.NumDims() != 1 || freqs.GetDim(0) != HS/2 {
+		return fmt.Errorf("bad freqs shape %v", freqs.Shape)
+	}
+	if norm_weight.NumDims() != 1 || norm_weight.GetDim(0) != col {
+		return fmt.Errorf("bad norm_weight shape %v", norm_weight.Shape)
+	}
+	if qkv_weight.GetDim(0) != (NH+2*kvNH)*HS || qkv_weight.GetDim(1) != col {
+		return fmt.Errorf("bad qkv_weight shape %v", qkv_weight.Shape)
+	}
+	if out_weight.GetDim(0) != col || out_weight.GetDim(1) != col {
+		return fmt.Errorf("bad out_weight shape %v", out_weight.Shape)
+	}
+
 	if embeds.NumDims() == 3 {
 		batch = embeds.GetDim(0)
 	}
@@ -731,6 +745,17 @@ func (r *cudaRunner) GroupQueryAttention(embeds, freqs, norm_weight, qkv_weight,
 func (r *cudaRunner) FeedForward(attn, norm_weight, fc_weight, out_weight *Tensor, ffl int, eps float32) error {
 	col := attn.GetDim(-1)
 	row := attn.GetDim(-2)
+
+	if norm_weight.NumDims() != 1 || norm_weight.GetDim(0) != col {
+		return fmt.Errorf("bad norm_weight shape %v", norm_weight.Shape)
+	}
+	if fc_weight.GetDim(0) != 2*ffl || fc_weight.GetDim(1) != col {
+		return fmt.Errorf("bad fc_weight shape %v", fc_weight.Shape)
+	}
+	if out_weight.GetDim(0) != col || out_weight.GetDim(1) != ffl {
+		return fmt.Errorf("bad out_weight shape %v", out_weight.Shape)
+	}
+
 	batch := 1
 	if attn.NumDims() == 3 {
 		batch = attn.GetDim(0)
