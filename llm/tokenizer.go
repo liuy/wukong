@@ -186,7 +186,7 @@ func (t *Tokenizer) Encode(text string) []int32 {
 }
 
 // Convert a sequence of token IDs to text
-func (t *Tokenizer) Decode(ids []int32) string {
+func (t *Tokenizer) BatchDecode(ids []int32) string {
 	// Assuming average token length of 4 characters as an estimation
 	capacity := len(ids) * 4
 
@@ -198,6 +198,10 @@ func (t *Tokenizer) Decode(ids []int32) string {
 	}
 
 	return sb.String()
+}
+
+func (t *Tokenizer) Decode(id int32) string {
+	return t.IdToToken[id]
 }
 
 func (t *Tokenizer) EncodeHeader(role string) []int32 {

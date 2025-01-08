@@ -2,6 +2,7 @@ package llm
 
 import (
 	"encoding/binary"
+	"fmt"
 	"io"
 	"os"
 	"testing"
@@ -70,12 +71,12 @@ func BenchmarkTokenizer(b *testing.B) {
 			tok.Encode(text)
 		}
 	})
-	b.Run("Decode", func(b *testing.B) {
+	b.Run("BatchDecode", func(b *testing.B) {
 		for i := 0; i < b.N; i++ {
-			tok.Decode(ids)
+			tok.BatchDecode(ids)
 		}
 	})
-	assert.Equal(b, text, tok.Decode(ids))
+	assert.Equal(b, text, tok.BatchDecode(ids))
 }
 
 func TestGGUFParser(t *testing.T) {
@@ -122,7 +123,7 @@ func TestGGUFGetPredictor(t *testing.T) {
 
 	text := "你好，World!"
 	ids := m.Encode(text)
-	assert.Equal(t, m.Decode(ids), text)
+	assert.Equal(t, m.BatchDecode(ids), text)
 
 	g := GGUFFile{
 		Header: GGUFHeader{},
@@ -409,4 +410,5 @@ func TestModelGenerate(t *testing.T) {
 		"user":   "What is the capital of China?",
 	}
 	m.Generate(message)
+	fmt.Println()
 }
