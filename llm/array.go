@@ -265,8 +265,22 @@ func DTypeOf(t reflect.Type) DType {
 //
 //	MakeTensor(Shape{2, 3}, []float32{1, 2, 3, 4, 5, 6})
 //
+// creates a 2D Tensor of float32. This function panics in case of an error.
+func MakeTensor(s Shape, data any) *Tensor {
+	ret, err := MakeTensorErr(s, data)
+	if err != nil {
+		panic(err)
+	}
+	return ret
+}
+
+// Creates a new Tensor from a Shape and a go slice of data of any type
+// For e.g,
+//
+//	MakeTensorErr(Shape{2, 3}, []float32{1, 2, 3, 4, 5, 6})
+//
 // creates a 2D Tensor of float32
-func MakeTensor(s Shape, data any) (ret *Tensor, e error) {
+func MakeTensorErr(s Shape, data any) (ret *Tensor, e error) {
 	if s == nil {
 		return nil, fmt.Errorf("shape is nil")
 	}
@@ -288,7 +302,7 @@ func MakeTensorOnes(s Shape) *Tensor {
 	for i := range ones {
 		ones[i] = 1.0
 	}
-	r, _ := MakeTensor(s, ones)
+	r := MakeTensor(s, ones)
 	return r
 }
 
@@ -299,7 +313,7 @@ func MakeTensorIdentity(d int) *Tensor {
 		data[i*d+i] = 1.0
 	}
 
-	r, _ := MakeTensor(Shape{d, d}, data)
+	r := MakeTensor(Shape{d, d}, data)
 	return r
 }
 

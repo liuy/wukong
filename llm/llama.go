@@ -1,7 +1,6 @@
 package llm
 
 import (
-	"fmt"
 	"math"
 	"regexp"
 	"slices"
@@ -10,46 +9,6 @@ import (
 )
 
 type Llama3Handler struct{}
-
-func getTokensFrom(path string) (map[string]int32, error) {
-	mergeableTokens, err := loadTokenBpe(path)
-	if err != nil {
-		return nil, err
-	}
-	mergeableCount := len(mergeableTokens)
-
-	reservedSpecialTokensCount := 256
-
-	tokens := make(map[string]int32, mergeableCount+reservedSpecialTokensCount)
-	specialTokensArr := []string{
-		"<|begin_of_text|>",
-		"<|end_of_text|>",
-		"<|reserved_special_token_0|>",
-		"<|reserved_special_token_1|>",
-		"<|finetune_right_pad_id|>",
-		"<|reserved_special_token_2|>",
-		"<|start_header_id|>",
-		"<|end_header_id|>",
-		"<|eom_id|>", // end of message
-		"<|eot_id|>", // end of turn
-		"<|python_tag|>",
-	}
-
-	reservedTokensArr := make([]string, reservedSpecialTokensCount-len(specialTokensArr))
-	for i := 0; i < len(reservedTokensArr); i++ {
-		reservedTokensArr[i] = fmt.Sprintf("<|reserved_special_token_%d|>", 3+i)
-	}
-	specialTokensArr = append(specialTokensArr, reservedTokensArr...)
-
-	for id, t := range specialTokensArr {
-		tokens[t] = int32(mergeableCount + id)
-	}
-
-	for t, id := range mergeableTokens {
-		tokens[t] = id
-	}
-	return tokens, nil
-}
 
 func (m *Llama3Handler) Initialize(toker *Tokenizer, toks map[string]int32) {
 	toker.TokenToId = make(map[string]int32, len(toks))
@@ -92,19 +51,6 @@ func (m *Llama3Handler) EncodeMessage(t *Tokenizer, message map[string]string) [
 	return ids
 }
 
-func get_freqs_array(HS int, theta float32) *Tensor {
-	freqs := make([]float32, HS/2)
-	for i := 0; i < HS/2; i++ {
-		freq := 1.0 / float32(math.Pow(float64(theta), float64(2*i)/float64(HS)))
-		freqs[i] = freq
-	}
-	f, err := MakeTensor(Shape{HS / 2}, freqs)
-	if err != nil {
-		panic(err)
-	}
-	return f
-}
-
 func makeFreqsTensor(factor *Tensor, HS int, cxtlen int, theta float32) *Tensor {
 	freqs_cis := make([]float32, HS*cxtlen)
 	for i := 0; i < HS/2; i++ {
@@ -117,11 +63,7 @@ func makeFreqsTensor(factor *Tensor, HS int, cxtlen int, theta float32) *Tensor 
 			freqs_cis[j*HS+2*i+1] = float32(math.Sin(float64(angle)))
 		}
 	}
-	t, err := MakeTensor(Shape{cxtlen, HS}, freqs_cis)
-	if err != nil {
-		panic(err)
-	}
-	return t
+	return MakeTensor(Shape{cxtlen, HS}, freqs_cis)
 }
 
 func (m *Llama3Handler) Setup(pred *Predictor) error {
@@ -178,10 +120,7 @@ func (m *Llama3Handler) Predict(pred *Predictor, toks [][]int32) ([]int32, error
 	batch := len(toks)
 	seqs := len(toks[0])
 	flat := slices.Concat(toks...)
-	ids, err := MakeTensor(Shape{batch, seqs}, flat)
-	if err != nil {
-		return nil, err
-	}
+	ids := MakeTensor(Shape{batch, seqs}, flat)
 	embeds, err := t.Embedding(ids)
 	if err != nil {
 		return nil, err

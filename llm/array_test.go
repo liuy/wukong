@@ -38,7 +38,7 @@ func TestTensorElemSize(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		a, err := MakeTensor(tt.shape, tt.data)
+		a, err := MakeTensorErr(tt.shape, tt.data)
 		assert.NoErr(t, err)
 		assert.NotNil(t, a)
 		assert.Equal(t, a.ElemTypeSize()/a.ElemBlockSize(), tt.expected)
@@ -56,7 +56,7 @@ func TestTensorSize(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		a, err := MakeTensor(tt.shape, tt.data)
+		a, err := MakeTensorErr(tt.shape, tt.data)
 		assert.NoErr(t, err)
 		assert.Equal(t, a.Size(), tt.expected)
 	}
@@ -121,13 +121,13 @@ func TestTensorFormat(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		a, err := MakeTensor(tt.shape, tt.data)
+		a, err := MakeTensorErr(tt.shape, tt.data)
 		assert.NoErr(t, err)
 		result := fmt.Sprintf("%v", a)
 		assert.Equal(t, tt.expected, result)
 	}
 	// runtime.GC() // test if finalizer is called
-	a, err := MakeTensor(Shape{3, 3}, []float32{1.1, 2.2, 3.3, 4.4, 5.5, 6.6, 7.7, 8.8, 9.9})
+	a, err := MakeTensorErr(Shape{3, 3}, []float32{1.1, 2.2, 3.3, 4.4, 5.5, 6.6, 7.7, 8.8, 9.9})
 	assert.NoErr(t, err)
 	res := fmt.Sprintf("%1r", a)
 	assert.Equal(t, "Shape: (3, 3)\nType: F32\nData:\nRow 1:\n 1.1 2.2 3.3\n", res)
@@ -164,7 +164,7 @@ func TestMakeTensor(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		_, err := MakeTensor(tt.Shape, tt.data)
+		_, err := MakeTensorErr(tt.Shape, tt.data)
 		assert.Equal(t, err == nil, tt.valid)
 	}
 }
@@ -201,14 +201,14 @@ func TestTensorSoftmax(t *testing.T) {
 		{Shape{2, 1, 3}, []float32{3.0, 1.0, 0.2, 1, 1000, 2}, []float32{0.8360188, 0.11314284, 0.05083836, 0.0, 1.0, 0.0}},
 	}
 
-	a, err := MakeTensor(Shape{3}, []float32{1.0, 2.0, 3.0})
+	a, err := MakeTensorErr(Shape{3}, []float32{1.0, 2.0, 3.0})
 	assert.NoErr(t, err)
 	res, err := a.Softmax()
 	assert.NoErr(t, err)
 	assert.SliceNear(t, []float32{0.0900305, 0.2447284, 0.6652409}, res.ToHost().([]float32), 1e-6)
 
 	for _, tt := range tests {
-		array, err := MakeTensor(tt.shape, tt.input)
+		array, err := MakeTensorErr(tt.shape, tt.input)
 		assert.NoErr(t, err)
 
 		res, err := array.Softmax()
@@ -256,13 +256,13 @@ func TestTensorMatmul(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		a, err := MakeTensor(tt.a, tt.aData)
+		a, err := MakeTensorErr(tt.a, tt.aData)
 		assert.NoErr(t, err)
-		b, err := MakeTensor(tt.b, tt.bData)
+		b, err := MakeTensorErr(tt.b, tt.bData)
 		assert.NoErr(t, err)
 		var bias *Tensor
 		if tt.biasData != nil {
-			bias, err = MakeTensor(tt.bias, tt.biasData)
+			bias, err = MakeTensorErr(tt.bias, tt.biasData)
 			assert.NoErr(t, err)
 		}
 
@@ -324,9 +324,9 @@ func TestTensorMatmul(t *testing.T) {
 }
 
 func TestTensorMatmulSoftmax(t *testing.T) {
-	a, err := MakeTensor(Shape{2, 3}, []float32{1, 2, 3, 4, 5, 6})
+	a, err := MakeTensorErr(Shape{2, 3}, []float32{1, 2, 3, 4, 5, 6})
 	assert.NoErr(t, err)
-	b, err := MakeTensor(Shape{3, 3}, []float32{1, 4, 7, 2, 5, 8, 3, 6, 9})
+	b, err := MakeTensorErr(Shape{3, 3}, []float32{1, 4, 7, 2, 5, 8, 3, 6, 9})
 	assert.NoErr(t, err)
 	c, err := a.Matmul(b, nil)
 	assert.NoErr(t, err)
@@ -397,9 +397,9 @@ func TestTensorEmbedding(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		embd, err := MakeTensor(tt.embdShape, tt.embdData)
+		embd, err := MakeTensorErr(tt.embdShape, tt.embdData)
 		assert.NoErr(t, err)
-		ids, err := MakeTensor(tt.idsShape, tt.idsData)
+		ids, err := MakeTensorErr(tt.idsShape, tt.idsData)
 		assert.NoErr(t, err)
 
 		result, err := embd.Embedding(ids)
@@ -420,7 +420,7 @@ func TestTensorEmbedding(t *testing.T) {
 		0, 25, 0, 252, 8, 244, 16, 236, 25, 227, 33, 219, 41, 211, 49, 203, 57, 195, 66, 186, 74, 178, 82, 170, 90, 162, 98, 154, 107, 145, 115, 137, 123, 129,
 	}
 	e.ToDevice(unsafe.Pointer(&data[0]))
-	ids, err := MakeTensor(Shape{2}, []int32{2, 1})
+	ids, err := MakeTensorErr(Shape{2}, []int32{2, 1})
 	assert.NoErr(t, err)
 	r, err := e.Embedding(ids)
 	assert.NoErr(t, err)
@@ -541,10 +541,10 @@ func TestTensorRmsnorm(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		x, err := MakeTensor(tt.xShape, tt.x)
+		x, err := MakeTensorErr(tt.xShape, tt.x)
 		assert.NoErr(t, err)
 
-		w, err := MakeTensor(tt.wShape, tt.w)
+		w, err := MakeTensorErr(tt.wShape, tt.w)
 		assert.NoErr(t, err)
 
 		result, err := w.Rmsnorm(x, tt.eps)
@@ -589,9 +589,9 @@ func TestTensorCat(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		a, err := MakeTensor(tt.aShape, tt.aData)
+		a, err := MakeTensorErr(tt.aShape, tt.aData)
 		assert.NoErr(t, err)
-		b, err := MakeTensor(tt.bShape, tt.bData)
+		b, err := MakeTensorErr(tt.bShape, tt.bData)
 		assert.NoErr(t, err)
 
 		result, err := a.Cat(b)
@@ -604,9 +604,9 @@ func TestTensorCat(t *testing.T) {
 		assert.Equal(t, tt.expectedData, result.ToHost().([]float32))
 	}
 	// Test different data types
-	a, err := MakeTensor(Shape{3, 2}, []int32{1, 2, 3, 4, 5, 6})
+	a, err := MakeTensorErr(Shape{3, 2}, []int32{1, 2, 3, 4, 5, 6})
 	assert.NoErr(t, err)
-	b, err := MakeTensor(Shape{2, 3}, []float32{7, 8, 9, 10, 11, 12})
+	b, err := MakeTensorErr(Shape{2, 3}, []float32{7, 8, 9, 10, 11, 12})
 	assert.NoErr(t, err)
 	_, err = a.Cat(b)
 	assert.Error(t, err)
@@ -641,9 +641,9 @@ func TestTensorDivInPlace(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		a, err := MakeTensor(tt.aShape, tt.aData)
+		a, err := MakeTensorErr(tt.aShape, tt.aData)
 		assert.NoErr(t, err)
-		b, err := MakeTensor(tt.bShape, tt.bData)
+		b, err := MakeTensorErr(tt.bShape, tt.bData)
 		assert.NoErr(t, err)
 
 		err = a.DivInPlace(b)
@@ -704,9 +704,9 @@ func TestTensorRopeInPlace(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		a, err := MakeTensor(tt.aShape, tt.aData)
+		a, err := MakeTensorErr(tt.aShape, tt.aData)
 		assert.NoErr(t, err)
-		freqs, err := MakeTensor(tt.posShape, tt.bData)
+		freqs, err := MakeTensorErr(tt.posShape, tt.bData)
 		assert.NoErr(t, err)
 
 		err = a.RopeInPlace(freqs)
@@ -720,9 +720,9 @@ func TestTensorRopeInPlace(t *testing.T) {
 			assert.SliceNear(t, tt.expectedData, result, 1e-6)
 		}
 	}
-	a, err := MakeTensor(Shape{2, 2}, []float32{1, 2, 3, 4})
+	a, err := MakeTensorErr(Shape{2, 2}, []float32{1, 2, 3, 4})
 	assert.NoErr(t, err)
-	freqs, err := MakeTensor(Shape{1}, []int{1})
+	freqs, err := MakeTensorErr(Shape{1}, []int{1})
 	assert.NoErr(t, err)
 	err = a.RopeInPlace(freqs)
 	assert.Error(t, err)
@@ -824,7 +824,7 @@ func TestEndToEndInference(t *testing.T) {
 	vocab := 16
 	eps := float32(1e-5)
 
-	embedding, err := MakeTensor(Shape{vocab, col}, []float32{
+	embedding, err := MakeTensorErr(Shape{vocab, col}, []float32{
 		0.1, 0.2, 0.3, 0.4, -0.1, -0.2, -0.3, -0.4,
 		0.2, 0.3, 0.4, 0.5, -0.2, -0.3, -0.4, -0.5,
 		0.3, 0.4, 0.5, 0.6, -0.3, -0.4, -0.5, -0.6,
@@ -844,13 +844,13 @@ func TestEndToEndInference(t *testing.T) {
 	})
 	assert.NoErr(t, err)
 
-	ids, err := MakeTensor(Shape{batch, row}, []int32{
+	ids, err := MakeTensorErr(Shape{batch, row}, []int32{
 		1, 2, 3, 4,
 		5, 6, 7, 0,
 	})
 	assert.NoErr(t, err)
 
-	freqs, err := MakeTensor(Shape{row, HS}, []float32{
+	freqs, err := MakeTensorErr(Shape{row, HS}, []float32{
 		1.00000000e+00, 0.00000000e+00, 1.00000000e+00, 0.00000000e+00,
 		5.40302277e-01, 8.41471016e-01, 9.99999881e-01, 5.24846022e-04,
 		-4.16146815e-01, 9.09297466e-01, 9.99999464e-01, 1.04969181e-03,
@@ -858,13 +858,13 @@ func TestEndToEndInference(t *testing.T) {
 	})
 	assert.NoErr(t, err)
 
-	attn_norm, err := MakeTensor(Shape{col}, []float32{
+	attn_norm, err := MakeTensorErr(Shape{col}, []float32{
 		0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8,
 	})
 	assert.NoErr(t, err)
 
 	// QKV weights (NH + 2*kvNH) * HS, col)
-	qkv_weight, err := MakeTensor(Shape{(NH + 2*kvNH) * HS, col}, []float32{
+	qkv_weight, err := MakeTensorErr(Shape{(NH + 2*kvNH) * HS, col}, []float32{
 		// Q weights
 		0.1, -0.1, 0.2, -0.2, 0.3, -0.3, 0.4, -0.4,
 		-0.1, 0.1, -0.2, 0.2, -0.3, 0.3, -0.4, 0.4,
@@ -888,7 +888,7 @@ func TestEndToEndInference(t *testing.T) {
 	assert.NoErr(t, err)
 
 	// Attention output projection (col, col)
-	attn_out, err := MakeTensor(Shape{col, col}, []float32{
+	attn_out, err := MakeTensorErr(Shape{col, col}, []float32{
 		0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8,
 		0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9,
 		0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0,
@@ -901,13 +901,13 @@ func TestEndToEndInference(t *testing.T) {
 	assert.NoErr(t, err)
 
 	// Feed-forward weights
-	ff_norm, err := MakeTensor(Shape{col}, []float32{
+	ff_norm, err := MakeTensorErr(Shape{col}, []float32{
 		0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9,
 	})
 	assert.NoErr(t, err)
 
 	// Feed-forward weights (2*ffl, col)
-	ff_weight, err := MakeTensor(Shape{2 * ffl, col}, []float32{
+	ff_weight, err := MakeTensorErr(Shape{2 * ffl, col}, []float32{
 		// First half for FC1
 		0.1, -0.1, 0.2, -0.2, 0.3, -0.3, 0.4, -0.4,
 		-0.2, 0.2, -0.3, 0.3, -0.4, 0.4, -0.5, 0.5,
@@ -946,7 +946,7 @@ func TestEndToEndInference(t *testing.T) {
 	assert.NoErr(t, err)
 
 	// Feed-forward output projection (col, ffl)
-	ff_out, err := MakeTensor(Shape{col, ffl}, []float32{
+	ff_out, err := MakeTensorErr(Shape{col, ffl}, []float32{
 		0.1, 0.2, 0.3, 0.4, -0.1, -0.2, -0.3, -0.4, 0.5, 0.6, 0.7, 0.8, -0.5, -0.6, -0.7, -0.8,
 		0.2, 0.3, 0.4, 0.5, -0.2, -0.3, -0.4, -0.5, 0.6, 0.7, 0.8, 0.9, -0.6, -0.7, -0.8, -0.9,
 		0.3, 0.4, 0.5, 0.6, -0.3, -0.4, -0.5, -0.6, 0.7, 0.8, 0.9, 1.0, -0.7, -0.8, -0.9, -1.0,
@@ -959,7 +959,7 @@ func TestEndToEndInference(t *testing.T) {
 	assert.NoErr(t, err)
 
 	// Output classifier weights (vocab, col)
-	classifier, err := MakeTensor(Shape{vocab, col}, []float32{
+	classifier, err := MakeTensorErr(Shape{vocab, col}, []float32{
 		0.1, 0.2, 0.3, 0.4, -0.1, -0.2, -0.3, -0.4,
 		0.2, 0.3, 0.4, 0.5, -0.2, -0.3, -0.4, -0.5,
 		0.3, 0.4, 0.5, 0.6, -0.3, -0.4, -0.5, -0.6,
@@ -1032,7 +1032,7 @@ func TestSaveAndLoadTensor(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			// Create and save tensor
-			tensor, err := MakeTensor(tt.shape, tt.data)
+			tensor, err := MakeTensorErr(tt.shape, tt.data)
 			assert.NoErr(t, err)
 
 			err = tensor.Save(tt.savePath)
@@ -1087,20 +1087,20 @@ func TestTensorGetElem(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		a, err := MakeTensor(tt.shape, tt.data)
+		a, err := MakeTensorErr(tt.shape, tt.data)
 		assert.NoErr(t, err)
 		result := a.GetElem(tt.index)
 		assert.Equal(t, tt.expected, result)
 	}
 
 	assert.Panic(t, func() {
-		a, err := MakeTensor(Shape{2, 3}, []float32{1.0, 2.0, 3.0, 4.0, 5.0, 6.0})
+		a, err := MakeTensorErr(Shape{2, 3}, []float32{1.0, 2.0, 3.0, 4.0, 5.0, 6.0})
 		assert.NoErr(t, err)
 		a.GetElem(6)
 	})
 
 	assert.Panic(t, func() {
-		a, err := MakeTensor(Shape{2, 3}, []float32{1.0, 2.0, 3.0, 4.0, 5.0, 6.0})
+		a, err := MakeTensorErr(Shape{2, 3}, []float32{1.0, 2.0, 3.0, 4.0, 5.0, 6.0})
 		assert.NoErr(t, err)
 		a.GetElem(-7)
 	})
@@ -1165,7 +1165,7 @@ func TestTensorRowSlice(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		a, err := MakeTensor(tt.shape, tt.data)
+		a, err := MakeTensorErr(tt.shape, tt.data)
 		assert.NoErr(t, err)
 
 		if tt.expectPanic {

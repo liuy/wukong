@@ -10,6 +10,46 @@ import (
 	"github.com/liuy/wukong/assert"
 )
 
+func getTokensFrom(path string) (map[string]int32, error) {
+	mergeableTokens, err := loadTokenBpe(path)
+	if err != nil {
+		return nil, err
+	}
+	mergeableCount := len(mergeableTokens)
+
+	reservedSpecialTokensCount := 256
+
+	tokens := make(map[string]int32, mergeableCount+reservedSpecialTokensCount)
+	specialTokensArr := []string{
+		"<|begin_of_text|>",
+		"<|end_of_text|>",
+		"<|reserved_special_token_0|>",
+		"<|reserved_special_token_1|>",
+		"<|finetune_right_pad_id|>",
+		"<|reserved_special_token_2|>",
+		"<|start_header_id|>",
+		"<|end_header_id|>",
+		"<|eom_id|>", // end of message
+		"<|eot_id|>", // end of turn
+		"<|python_tag|>",
+	}
+
+	reservedTokensArr := make([]string, reservedSpecialTokensCount-len(specialTokensArr))
+	for i := 0; i < len(reservedTokensArr); i++ {
+		reservedTokensArr[i] = fmt.Sprintf("<|reserved_special_token_%d|>", 3+i)
+	}
+	specialTokensArr = append(specialTokensArr, reservedTokensArr...)
+
+	for id, t := range specialTokensArr {
+		tokens[t] = int32(mergeableCount + id)
+	}
+
+	for t, id := range mergeableTokens {
+		tokens[t] = id
+	}
+	return tokens, nil
+}
+
 func TestTokenizer(t *testing.T) {
 	toks, err := getTokensFrom("test_data/llama3_tokenizer.model")
 	assert.NoErr(t, err)
