@@ -3,6 +3,8 @@ package llm
 import (
 	"encoding/binary"
 	"fmt"
+
+	"github.com/liuy/wukong/llm/mmap"
 )
 
 // GGUFType represents the type of metadata value
@@ -142,7 +144,7 @@ type GGUFFile struct {
 
 // GGUFParser reads a GGUF file and returns a parsed GGUFFile structure
 func GGUFParser(filename string) (*GGUFFile, error) {
-	file, err := MmapOpen(filename)
+	file, err := mmap.Open(filename)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open file: %w", err)
 	}
@@ -194,7 +196,7 @@ func GGUFParser(filename string) (*GGUFFile, error) {
 }
 
 // readGGUFString reads a GGUF string from the file and transforms it to go string
-func readGGUFString(file *mmapReader) (string, error) {
+func readGGUFString(file *mmap.Reader) (string, error) {
 	var length uint64
 	if err := binary.Read(file, binary.LittleEndian, &length); err != nil {
 		return "", fmt.Errorf("failed to read string length: %w", err)
@@ -209,7 +211,7 @@ func readGGUFString(file *mmapReader) (string, error) {
 }
 
 // readGGUFValue reads a GGUF value from the file and transforms it to go value
-func readGGUFValue(file *mmapReader, valueType GGUFType) (any, error) {
+func readGGUFValue(file *mmap.Reader, valueType GGUFType) (any, error) {
 	var value any
 
 	switch valueType {
@@ -364,7 +366,7 @@ func readGGUFValue(file *mmapReader, valueType GGUFType) (any, error) {
 	return value, nil
 }
 
-func readKV(file *mmapReader) (GGUFKV, error) {
+func readKV(file *mmap.Reader) (GGUFKV, error) {
 	var kv GGUFKV
 
 	key, err := readGGUFString(file)
@@ -387,7 +389,7 @@ func readKV(file *mmapReader) (GGUFKV, error) {
 	return kv, nil
 }
 
-func readTensorInfo(file *mmapReader) (string, GGUFTensorInfo, error) {
+func readTensorInfo(file *mmap.Reader) (string, GGUFTensorInfo, error) {
 	var info GGUFTensorInfo
 
 	name, err := readGGUFString(file)
@@ -518,7 +520,7 @@ func (g *GGUFFile) GetTokenizer() *Tokenizer {
 	return tok
 }
 
-func loadTensors(file *mmapReader, g *GGUFFile) map[string]*Tensor {
+func loadTensors(file *mmap.Reader, g *GGUFFile) map[string]*Tensor {
 	tensors := make(map[string]*Tensor, len(g.TensorInfos))
 	for name, info := range g.TensorInfos {
 		// fmt.Printf("name: %s, shape: %v, dtype: %v\n", name, info.Dims, info.Type)

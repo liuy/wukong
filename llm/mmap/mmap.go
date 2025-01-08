@@ -1,4 +1,4 @@
-package llm
+package mmap
 
 import (
 	"fmt"
@@ -9,17 +9,17 @@ import (
 	"unsafe"
 )
 
-// mmapReader reads a memory-mapped file.
+// Reader reads a memory-mapped file.
 //
 // Like any io.Reader, clients can execute parallel ReadAt calls, but it is
 // not safe to call Close and reading methods concurrently.
-type mmapReader struct {
+type Reader struct {
 	data   []byte
 	offset int64
 }
 
 // Close closes the reader.
-func (r *mmapReader) Close() error {
+func (r *Reader) Close() error {
 	if r.data == nil {
 		return nil
 	} else if len(r.data) == 0 {
@@ -33,43 +33,25 @@ func (r *mmapReader) Close() error {
 }
 
 // AlignOffset aligns the offset to the specified alignment.
-func (r *mmapReader) AlignOffset(alignment int64) int64 {
+func (r *Reader) AlignOffset(alignment int64) int64 {
 	r.offset += (alignment - (r.offset % alignment)) % alignment
 	return r.offset
 }
 
 // Len returns the length of the underlying memory-mapped file.
-func (r *mmapReader) Len() int {
+func (r *Reader) Len() int {
 	return len(r.data)
 }
 
 // Read reads data into p and returns the number of bytes read.
-func (r *mmapReader) Read(p []byte) (int, error) {
+func (r *Reader) Read(p []byte) (int, error) {
 	n, err := r.ReadAt(p, r.offset)
 	r.offset += int64(n)
 	return n, err
 }
 
-// // Seek sets the offset for the next Read or Write.
-// func (r *mmapReader) Seek(offset int64, whence int) (int64, error) {
-// 	switch whence {
-// 	case io.SeekStart:
-// 		r.offset = offset
-// 	case io.SeekCurrent:
-// 		r.offset += offset
-// 	case io.SeekEnd:
-// 		r.offset = int64(r.Len()) + offset
-// 	default:
-// 		return 0, fmt.Errorf("invalid whence, should be io.SeekStart, io.SeekCurrent or io.SeekEnd")
-// 	}
-// 	if r.offset < 0 {
-// 		return 0, fmt.Errorf("invalid offset causes negative position, %d", r.offset)
-// 	}
-// 	return r.offset, nil
-// }
-
 // ReadAt reads data into p at offset off in the underlying input source.
-func (r *mmapReader) ReadAt(p []byte, off int64) (int, error) {
+func (r *Reader) ReadAt(p []byte, off int64) (int, error) {
 	if r.data == nil {
 		return 0, fmt.Errorf("mmap: reader is closed")
 	}
@@ -84,7 +66,7 @@ func (r *mmapReader) ReadAt(p []byte, off int64) (int, error) {
 }
 
 // Open memory-maps the named file for reading.
-func MmapOpen(filename string) (*mmapReader, error) {
+func Open(filename string) (*Reader, error) {
 	f, err := os.Open(filename)
 	if err != nil {
 		return nil, err
@@ -121,13 +103,13 @@ func MmapOpen(filename string) (*mmapReader, error) {
 	if err != nil {
 		return nil, err
 	}
-	r := &mmapReader{data, 0}
-	runtime.SetFinalizer(r, (*mmapReader).Close)
+	r := &Reader{data, 0}
+	runtime.SetFinalizer(r, (*Reader).Close)
 	return r, nil
 }
 
 // PointerAt returns a pointer to the byte at the specified offset.
-func (r *mmapReader) PointerAt(offset int64) (unsafe.Pointer, error) {
+func (r *Reader) PointerAt(offset int64) (unsafe.Pointer, error) {
 	if r.data == nil {
 		return nil, fmt.Errorf("mmap: reader is closed")
 	}
