@@ -67,6 +67,7 @@ func makeFreqsTensor(factor *Tensor, HS int, cxtlen int, theta float32) *Tensor 
 }
 
 func (m *Llama3Handler) Setup(pred *Predictor) error {
+	CudaSetup()
 	w := pred.Tensors["rope_freqs.weight"]
 	freqs_cis := makeFreqsTensor(w, int(pred.HeadDim), int(pred.ContextLen), pred.RopeTheta)
 	pred.Tensors["rope_freqs.weight"] = freqs_cis
