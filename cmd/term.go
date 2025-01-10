@@ -574,6 +574,7 @@ type Buffer struct {
 	LineWidth    int
 	Width        int
 	Height       int
+	markdown     *MarkdownFormatter
 }
 
 func NewBuffer(prompt *Prompt) (*Buffer, error) {
@@ -594,6 +595,7 @@ func NewBuffer(prompt *Prompt) (*Buffer, error) {
 		Width:        width,
 		Height:       height,
 		LineWidth:    lwidth,
+		markdown:     NewMarkdownFormatter(),
 	}
 
 	return b, nil
@@ -728,6 +730,29 @@ func (b *Buffer) DisplaySize() int {
 		sum += RuneWidth(r)
 	}
 	return sum
+}
+
+func (b *Buffer) FormatAdd(str string) {
+	if strings.HasSuffix(str, "\n") {
+		b.Buf = append(b.Buf, []rune(str)...)
+		formatted := b.markdown.Format(string(b.Buf))
+		w := b.DisplaySize()
+		lineNums := 0
+		if w == 0 {
+			lineNums = 1 // empty line with '\n'
+		} else {
+			lineNums = (w + b.Width - 1) / b.Width
+		}
+		for i := 1; i < lineNums; i++ {
+			fmt.Print(CursorBOL + ClearToEOL + CursorUp) // clear line and move up
+		}
+		fmt.Print(CursorBOL + ClearToEOL) // clear line
+		fmt.Print(formatted)
+		b.Buf = []rune{}
+		return
+	}
+	fmt.Print(str)
+	b.Buf = append(b.Buf, []rune(str)...)
 }
 
 func (b *Buffer) Add(r rune) {

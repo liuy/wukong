@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"strings"
+	"unicode/utf8"
 
 	"github.com/liuy/wukong/cmd"
 )
@@ -36,7 +38,7 @@ type Model struct {
 var pbar = cmd.NewProgressBar()
 
 func NewModel(path string) (*Model, error) {
-	pbar.PrefixText = "Awakening "
+	pbar.PrefixText = "AWAKENING "
 	pbar.ShowPercentage = true
 	cmd.HideCursor()
 	gguf, err := GGUFParser(path)
@@ -56,10 +58,15 @@ func (m *Model) Generate(message map[string]string) error {
 	s := m.EncodeMessage(message)
 	var ids [][]int32
 	ids = append(ids, s)
+	buf, err := cmd.NewBuffer(&cmd.Prompt{})
+	if err != nil {
+		return err
+	}
+	part := strings.Builder{}
 	for {
 		select {
 		case <-sigChan:
-			fmt.Print("[Cancelled by Ctrl+C]")
+			fmt.Println("[Cancelled by Ctrl+C]")
 			return nil
 		default:
 			pids, err := m.Predict(ids)
@@ -67,10 +74,22 @@ func (m *Model) Generate(message map[string]string) error {
 				return err
 			}
 			if pids[0] == m.EotId || pids[0] == -1 {
+				buf.FormatAdd("\n") // Format the remaining string if any
 				return nil
 			}
 			ids[0] = append(ids[0], pids[0])
-			fmt.Print(m.Decode(pids[0]))
+			str := m.Decode(pids[0])
+			if utf8.ValidString(str) {
+				buf.FormatAdd(str)
+				continue
+			}
+			// Llama3 model may output incomplete utf8 string, sigh ...
+			part.WriteString(str)
+			s := part.String()
+			if utf8.ValidString(s) {
+				buf.FormatAdd(s)
+				part.Reset()
+			}
 		}
 	}
 }
