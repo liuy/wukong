@@ -1,6 +1,12 @@
 package llm
 
-import "fmt"
+import (
+	"fmt"
+	"os"
+	"os/signal"
+
+	"github.com/liuy/wukong/cmd"
+)
 
 type PredicHandler interface {
 	Setup(*Predictor) error
@@ -27,37 +33,53 @@ type Model struct {
 	*Tokenizer
 }
 
+var pbar = cmd.NewProgressBar()
+
 func NewModel(path string) (*Model, error) {
+	pbar.PrefixText = "Awakening "
+	pbar.ShowPercentage = true
+	cmd.HideCursor()
 	gguf, err := GGUFParser(path)
 	if err != nil {
 		return nil, err
 	}
-	return &Model{
-		Predictor: gguf.GetPredictor(),
-		Tokenizer: gguf.GetTokenizer(),
-	}, nil
+	Predictor := gguf.GetPredictor()
+	Tokenizer := gguf.GetTokenizer()
+	return &Model{Predictor, Tokenizer}, nil
 }
 
 func (m *Model) Generate(message map[string]string) error {
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, os.Interrupt)
+	defer signal.Stop(sigChan)
+
 	s := m.EncodeMessage(message)
 	var ids [][]int32
 	ids = append(ids, s)
 	for {
-		pids, err := m.Predict(ids)
-		if err != nil {
-			return err
+		select {
+		case <-sigChan:
+			fmt.Print("[Cancelled by Ctrl+C]")
+			return nil
+		default:
+			pids, err := m.Predict(ids)
+			if err != nil {
+				return err
+			}
+			if pids[0] == m.EotId || pids[0] == -1 {
+				return nil
+			}
+			ids[0] = append(ids[0], pids[0])
+			fmt.Print(m.Decode(pids[0]))
 		}
-		if pids[0] == m.EotId || pids[0] == -1 {
-			break
-		}
-		ids[0] = append(ids[0], pids[0])
-		fmt.Print(m.Decode(pids[0]))
 	}
-	return nil
 }
 
 func (m *Model) Setup() error {
-	return m.PredicHandler.Setup(m.Predictor)
+	e := m.PredicHandler.Setup(m.Predictor)
+	pbar.Tick()
+	cmd.ShowCursor()
+	return e
 }
 
 func (m *Model) Predict(ids [][]int32) ([]int32, error) {

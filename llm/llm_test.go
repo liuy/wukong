@@ -1,6 +1,7 @@
 package llm
 
 import (
+	"bytes"
 	"encoding/binary"
 	"fmt"
 	"io"
@@ -323,6 +324,16 @@ func TestModelGenerate(t *testing.T) {
 		"system": "You are a helpful assistant",
 		"user":   "What is the capital of China?",
 	}
+	var buf bytes.Buffer
+	oldStdout := os.Stdout
+	r, w, _ := os.Pipe()
+	os.Stdout = w
+
 	m.Generate(message)
-	fmt.Println()
+
+	w.Close()
+	os.Stdout = oldStdout
+	buf.ReadFrom(r)
+	str := buf.String()
+	assert.Equal(t, "The capital of China is Beijing.", str)
 }

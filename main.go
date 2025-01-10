@@ -116,7 +116,8 @@ func runHandler(ctx context.Context, c *cmd.Command) error {
 			} else {
 				fmt.Fprintln(os.Stdout, "Available Commands:")
 				fmt.Fprintln(os.Stdout, "  /?, /help       Help for a command")
-				fmt.Fprintln(os.Stdout, "  /? shortcuts    Help for keyboard shortcuts")
+				fmt.Fprintln(os.Stdout, "  /bye, /exit     Exit")
+				fmt.Fprintln(os.Stdout, "  /? shorts       Help for keyboard shortcuts")
 				fmt.Fprintln(os.Stdout, "")
 				fmt.Fprintln(os.Stdout, "Use \"\"\" to begin a multi-line message.")
 				fmt.Fprintln(os.Stdout, "")

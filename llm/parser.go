@@ -157,6 +157,9 @@ func GGUFParser(filename string) (*GGUFFile, error) {
 	if err := binary.Read(file, binary.LittleEndian, &gguf.Header); err != nil {
 		return nil, fmt.Errorf("failed to read header: %w", err)
 	}
+
+	pbar.Max = float64(gguf.Header.KVCount + gguf.Header.TensorCount*2 + 3)
+
 	if string(gguf.Header.Magic[:]) != "GGUF" {
 		return nil, fmt.Errorf("invalid magic number: expected 'GGUF', got '%s'", string(gguf.Header.Magic[:]))
 	}
@@ -172,6 +175,7 @@ func GGUFParser(filename string) (*GGUFFile, error) {
 				return nil, fmt.Errorf("failed to read metadata KV pair %d: %w", i, err)
 			}
 			gguf.KVs[kv.Key] = kv.Value
+			pbar.Tick()
 		}
 	}
 
@@ -187,6 +191,7 @@ func GGUFParser(filename string) (*GGUFFile, error) {
 			return nil, fmt.Errorf("failed to read tensor info %d: %w", i, err)
 		}
 		gguf.TensorInfos[name] = info
+		pbar.Tick()
 		// fmt.Printf("Tensor name: %s, shape: %v, dtype: %v\n", name, info.Dims, info.Type)
 	}
 
@@ -517,6 +522,7 @@ func (g *GGUFFile) GetTokensMap() map[string]int32 {
 func (g *GGUFFile) GetTokenizer() *Tokenizer {
 	tokens := g.GetTokensMap()
 	tok := NewTokenizer(tokens, &Llama3Handler{})
+	pbar.Tick()
 	return tok
 }
 
@@ -533,6 +539,7 @@ func loadTensors(file *mmap.Reader, g *GGUFFile) map[string]*Tensor {
 			return nil
 		}
 		tensors[name] = t
+		pbar.Tick()
 	}
 
 	return tensors
@@ -562,5 +569,6 @@ func (g *GGUFFile) GetPredictor() *Predictor {
 	}
 	pred.Tensors = g.Tensors
 	pred.PredicHandler = &Llama3Handler{}
+	pbar.Tick()
 	return pred
 }

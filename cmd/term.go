@@ -137,6 +137,7 @@ func SetRawMode(fd uintptr) (*Termios, error) {
 
 func UnsetRawMode(fd uintptr, termios any) error {
 	t := termios.(*Termios)
+	t.Lflag &^= syscall.ECHOCTL // disable echo of control characters
 	return setTermios(fd, t)
 }
 
