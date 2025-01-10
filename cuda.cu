@@ -819,13 +819,10 @@ void cuda_mh_sdpa(void *out, const void *inp, int batch, int row, int NH, int HS
     size_t qkv_size = 3 * q_size;
     size_t att_size = batch * NH * row * row * sizeof(float);
 
-    cuda_check(cudaMalloc(&qkv, qkv_size));
+    qkv = (float *)cuda_malloc(qkv_size);
     // try best to reuse input buffer
     vatt = (float *)inp;
-    att = vatt + q_size;
-    if (att_size > q_size * 2) {
-	    cuda_check(cudaMalloc(&att, att_size));
-    }
+    att = (float *)cuda_malloc(att_size);
 
     float *q = qkv;
     float *k = qkv + batch * NH * row * HS;
@@ -881,9 +878,7 @@ void cuda_mh_sdpa(void *out, const void *inp, int batch, int row, int NH, int HS
     unpermute_kernel<<<num_blocks, block_size>>>((float *)out, vatt, batch, row, NH, HS);
 
     cuda_free(qkv);
-    if (att_size > q_size * 2) {
-        cuda_free(att);
-    }
+    cuda_free(att);
 }
 
 /*
