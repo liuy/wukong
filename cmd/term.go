@@ -826,12 +826,17 @@ func (b *Buffer) drawRemaining() {
 		fmt.Print(ClearToEOL)
 	}
 
-	if currLineSpace != b.LineWidth-place && currLineSpace != remLength {
-		b.LineHasSpace[b.DisplayPos/b.LineWidth] = true
-	} else if currLineSpace != b.LineWidth-place {
-		b.LineHasSpace = append(b.LineHasSpace[:b.DisplayPos/b.LineWidth], b.LineHasSpace[b.DisplayPos/b.LineWidth+1:]...)
-	} else {
-		b.LineHasSpace[b.DisplayPos/b.LineWidth] = false
+	lineIndex := b.DisplayPos / b.LineWidth
+	if lineIndex >= 0 && lineIndex < len(b.LineHasSpace) {
+		if currLineSpace != b.LineWidth-place && currLineSpace != remLength {
+			b.LineHasSpace[lineIndex] = true
+		} else if currLineSpace != b.LineWidth-place {
+			if lineIndex+1 < len(b.LineHasSpace) {
+				b.LineHasSpace = append(b.LineHasSpace[:lineIndex], b.LineHasSpace[lineIndex+1:]...)
+			}
+		} else {
+			b.LineHasSpace[lineIndex] = false
+		}
 	}
 
 	if (b.DisplayPos+currLineSpace)%b.LineWidth == 0 && currLine == remainingText {
