@@ -335,5 +335,5 @@ func TestModelGenerate(t *testing.T) {
 	os.Stdout = oldStdout
 	buf.ReadFrom(r)
 	str := buf.String()
-	assert.Equal(t, "The capital of China is Beijing.", str)
+	assert.Equal(t, "The capital of China is Beijing.\x1b[1G\x1b[KThe capital of China is Beijing.\n", str)
 }

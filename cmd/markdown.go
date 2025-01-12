@@ -38,16 +38,24 @@ func NewMarkdownFormatter() *MarkdownFormatter {
 
 func (m *MarkdownFormatter) Format(input string) string {
 	m.buf.Reset()
-	lines := strings.Split(input, "\n") // Note For e.g, "text\n\n" -> ["text", "", ""]
 
-	// remove the extra "" line added by the split if input ends with a newline
-	if len(lines) > 1 && lines[len(lines)-1] == "" {
-		lines = lines[:len(lines)-1]
-	}
+	start := 0
+	for {
+		end := strings.Index(input[start:], "\n")
+		if end == -1 {
+			// Process the last line if it's not empty
+			if start < len(input) {
+				m.formatLine(input[start:])
+				m.buf.WriteByte('\n')
+			}
+			break
+		}
 
-	for _, line := range lines {
+		line := input[start : start+end]
 		m.formatLine(line)
 		m.buf.WriteByte('\n')
+
+		start += end + 1
 	}
 
 	return m.buf.String()
@@ -108,7 +116,7 @@ func (m *MarkdownFormatter) formatInline(text string) {
 		switch {
 		case runes[i] == '*':
 			switch {
-			case i+1 < len(runes) && runes[i+1] == ' ': // * bullet list
+			case !m.inItalic && i+1 < len(runes) && runes[i+1] == ' ': // * bullet list
 				m.buf.WriteString("  • ")
 				i++ // skip the space
 			case i+1 < len(runes) && runes[i+1] == '*': // **bold**
