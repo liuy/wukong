@@ -2,6 +2,7 @@ package llm
 
 import (
 	"bytes"
+	"context"
 	"encoding/binary"
 	"fmt"
 	"io"
@@ -148,7 +149,8 @@ func TestGGUFParser(t *testing.T) {
 }
 
 func TestGGUFGetPredictor(t *testing.T) {
-	m, err := NewModel("test_data/llama3.2-3b.gguf")
+	ctx := context.Background()
+	m, err := NewModel(ctx, "test_data/llama3.2-3b.gguf")
 	if err != nil {
 		t.Skip("llama3.2-3b.gguf: ", err)
 	}
@@ -315,7 +317,8 @@ func TestLoadTensors(t *testing.T) {
 }
 
 func TestModelGenerate(t *testing.T) {
-	m, err := NewModel("test_data/llama3.2-1b-f32.gguf")
+	ctx := context.Background()
+	m, err := NewModel(ctx, "test_data/llama3.2-1b-f32.gguf")
 	if err != nil {
 		t.Skip("llama3.2-3b.gguf: ", err)
 	}

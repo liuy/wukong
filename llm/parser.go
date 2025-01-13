@@ -158,7 +158,7 @@ func GGUFParser(filename string) (*GGUFFile, error) {
 		return nil, fmt.Errorf("failed to read header: %w", err)
 	}
 
-	pbar.Max = float64(gguf.Header.KVCount + gguf.Header.TensorCount*2 + 3)
+	pbar.Max = int64(gguf.Header.KVCount + gguf.Header.TensorCount*2 + 3)
 
 	if string(gguf.Header.Magic[:]) != "GGUF" {
 		return nil, fmt.Errorf("invalid magic number: expected 'GGUF', got '%s'", string(gguf.Header.Magic[:]))

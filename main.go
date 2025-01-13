@@ -12,8 +12,6 @@ import (
 	"github.com/liuy/wukong/llm"
 )
 
-var version = "0.1"
-
 type MultilineState int
 
 const (
@@ -26,7 +24,7 @@ func runHandler(ctx context.Context, c *cmd.Command) error {
 	if c.Arg(0) == "" {
 		return fmt.Errorf("missing model name")
 	}
-	model, err := llm.NewModel(c.Arg(0))
+	model, err := llm.NewModel(ctx, c.Arg(0))
 	if err != nil {
 		return err
 	}
@@ -147,7 +145,7 @@ func main() {
 	m := cmd.NewCommand("wk", "A simple cmdline for wukong",
 		func(ctx context.Context, c *cmd.Command) error {
 			if c.GetBool("--version") {
-				fmt.Println("Version:", version)
+				fmt.Println("Version:", llm.Version)
 				return nil
 			}
 			c.ShowHelp()
@@ -155,8 +153,18 @@ func main() {
 		})
 
 	run := cmd.NewCommand("run", "Run the model", runHandler)
+	pull := cmd.NewCommand("pull", "Pull the model", func(ctx context.Context, c *cmd.Command) error {
+		if c.Arg(0) == "" {
+			return fmt.Errorf("missing model name")
+		}
+		_, err := llm.PullModel(ctx, c.Arg(0))
+		return err
+	})
 
-	m.SubCommand(run)
+	m.SubCommand(
+		run,
+		pull,
+	)
 	m.SetBool("-v", "--version", false, "show version")
 
 	if err := m.Run(context.Background(), os.Args); err != nil {

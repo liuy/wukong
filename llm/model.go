@@ -1,7 +1,9 @@
 package llm
 
 import (
+	"context"
 	"fmt"
+	"net/http"
 	"os"
 	"os/signal"
 	"strings"
@@ -9,6 +11,8 @@ import (
 
 	"github.com/liuy/wukong/cmd"
 )
+
+var Version = "0.1"
 
 type PredicHandler interface {
 	Setup(*Predictor) error
@@ -30,17 +34,67 @@ type Predictor struct {
 	PredicHandler
 }
 
+type registryOptions struct {
+	Insecure bool
+	Username string
+	Password string
+	Token    string
+
+	CheckRedirect func(req *http.Request, via []*http.Request) error
+}
+
 type Model struct {
 	*Predictor
 	*Tokenizer
 }
 
-var pbar = cmd.NewProgressBar()
+var pbar = NewProgressBar()
 
-func NewModel(path string) (*Model, error) {
+func PullModel(ctx context.Context, path string) (string, error) {
+	regOpts := &registryOptions{
+		Insecure: true,
+	}
+
+	mp := ParseModelPath(path)
+	prune, err := BuildPruneMap(mp)
+	if err != nil {
+		return "", err
+	}
+
+	manifest, err := PullManifest(ctx, mp, regOpts)
+	if err != nil {
+		return "", err
+	}
+
+	err = PullLayers(ctx, mp, regOpts, manifest, prune)
+	if err != nil {
+		return "", err
+	}
+
+	if err := WriteManifest(mp, manifest); err != nil {
+		return "", err
+	}
+
+	if err := PruneLayers(prune); err != nil {
+		return "", err
+	}
+
+	if err := LinkModel(mp, manifest); err != nil {
+		return "", err
+	}
+
+	return mp.GetModelTagPath(), nil
+}
+
+func NewModel(ctx context.Context, path string) (*Model, error) {
+	if _, err := os.Stat(path); os.IsNotExist(err) {
+		if path, err = PullModel(ctx, path); err != nil {
+			return nil, err
+		}
+	}
+	pbar.Reset()
 	pbar.PrefixText = "AWAKENING "
 	pbar.ShowPercentage = true
-	cmd.HideCursor()
 	gguf, err := GGUFParser(path)
 	if err != nil {
 		return nil, err
@@ -97,7 +151,6 @@ func (m *Model) Generate(message map[string]string) error {
 func (m *Model) Setup() error {
 	e := m.PredicHandler.Setup(m.Predictor)
 	pbar.Tick()
-	cmd.ShowCursor()
 	return e
 }
 
