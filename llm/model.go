@@ -87,9 +87,17 @@ func PullModel(ctx context.Context, path string) (string, error) {
 }
 
 func NewModel(ctx context.Context, path string) (*Model, error) {
-	if _, err := os.Stat(path); os.IsNotExist(err) {
-		if path, err = PullModel(ctx, path); err != nil {
-			return nil, err
+	if _, err := os.Stat(path); os.IsNotExist(err) { // First check if the model path exists
+		// If not, check if the model is in .wukong/models
+		mp := ParseModelPath(path)
+		p := mp.GetModelTagPath()
+		if _, err := os.Stat(p); os.IsNotExist(err) {
+			// Finally, pull the model from the internet
+			if path, err = PullModel(ctx, path); err != nil {
+				return nil, err
+			}
+		} else {
+			path = p
 		}
 	}
 	pbar.Reset()
