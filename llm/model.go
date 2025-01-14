@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/signal"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	"github.com/liuy/wukong/cmd"
@@ -125,6 +126,8 @@ func (m *Model) Generate(message map[string]string) error {
 		return err
 	}
 	part := strings.Builder{}
+	start := time.Now()
+	numtok := 0
 	for {
 		select {
 		case <-sigChan:
@@ -135,8 +138,11 @@ func (m *Model) Generate(message map[string]string) error {
 			if err != nil {
 				return err
 			}
+			numtok += 1
 			if pids[0] == m.EotId || pids[0] == -1 {
 				buf.FormatAdd("\n") // Format the remaining string if any
+				elapsed := time.Since(start)
+				fmt.Printf("\n[%d Tokens generated, %.1f tokens/s]\n", numtok, float64(numtok)/elapsed.Seconds())
 				return nil
 			}
 			ids[0] = append(ids[0], pids[0])
