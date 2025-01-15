@@ -48,10 +48,10 @@ func NewProgressBar() *ProgressBar {
 		Max:            100.0,
 		ShowPercentage: false,
 		PrefixText:     "",
-		Start:          "[",
-		Fill:           "■",
-		Remainder:      " ",
-		End:            "]",
+		Start:          "",
+		Fill:           "█",
+		Remainder:      "░",
+		End:            "",
 		PostfixText:    "",
 	}
 }
@@ -75,8 +75,7 @@ func (pb *ProgressBar) Tick() {
 
 func (pb *ProgressBar) PrintProgress() {
 	HideCursor()
-	fmt.Print(pb.PrefixText)
-	fmt.Print(pb.Start)
+	fmt.Print(pb.PrefixText, pb.Start)
 
 	pos := float64(pb.Progress) * pb.BarWidth / float64(pb.Max)
 	for i := 0; i < int(pb.BarWidth); i++ {
@@ -91,9 +90,9 @@ func (pb *ProgressBar) PrintProgress() {
 	if pb.ShowPercentage {
 		fmt.Printf(" %d%%", int(float64(pb.Progress)/float64(pb.Max)*100.0))
 	} else {
-		fmt.Printf("%10s/%s", HumanBytes(pb.Progress), HumanBytes(pb.Max))
+		fmt.Printf(" %s/%s", HumanBytes(pb.Progress), HumanBytes(pb.Max))
 	}
-	fmt.Print(" ", pb.PostfixText, "\r")
+	fmt.Print(" ", pb.PostfixText, "\033[0K\r") // Erase to end of line
 
 	if pb.Progress >= int64(pb.Max) {
 		pb.Progress = 0

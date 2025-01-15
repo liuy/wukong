@@ -1036,7 +1036,11 @@ func (b *blobDownload) Wait(ctx context.Context) error {
 			return b.err
 		case <-ticker.C:
 			speed := (b.Completed.Load() - lastcompleted) // bytes per second
-			pbar.PostfixText = fmt.Sprintf("%8s/s", HumanBytes(speed))
+			var estimate time.Duration
+			if speed > 0 {
+				estimate = time.Duration((b.Total-b.Completed.Load())/speed) * time.Second
+			}
+			pbar.PostfixText = fmt.Sprintf("%8s/s %s", HumanBytes(speed), estimate)
 			pbar.SetProgress(b.Completed.Load())
 			lastcompleted = b.Completed.Load()
 		case <-ctx.Done():
