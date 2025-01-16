@@ -127,6 +127,7 @@ func (m *Model) Generate(message map[string]string) error {
 	}
 	part := strings.Builder{}
 	start := time.Now()
+	var ttft time.Duration
 	numtok := 0
 	for {
 		select {
@@ -139,10 +140,13 @@ func (m *Model) Generate(message map[string]string) error {
 				return err
 			}
 			numtok += 1
+			if numtok == 1 {
+				ttft = time.Since(start)
+			}
 			if pids[0] == m.EotId || pids[0] == -1 {
 				buf.FormatAdd("\n") // Format the remaining string if any
 				elapsed := time.Since(start)
-				fmt.Printf("\n[%d Tokens generated, %.1f tokens/s]\n", numtok, float64(numtok)/elapsed.Seconds())
+				fmt.Printf("\n[%d Tokens, First Token: %.1fs, %.1f t/s]\n", numtok, ttft.Seconds(), float64(numtok)/elapsed.Seconds())
 				return nil
 			}
 			ids[0] = append(ids[0], pids[0])
