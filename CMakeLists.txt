@@ -10,6 +10,7 @@ set(FILES
 )
 add_library(wukong STATIC ${FILES})
 target_link_libraries(wukong -lcublasLt -lcudnn -lcublas)
+set_target_properties(wukong PROPERTIES CUDA_ARCHITECTURES "native")
 
 option(CF_TEST "Enable tests" off)
 if(CF_TEST)

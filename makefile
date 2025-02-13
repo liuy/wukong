@@ -23,5 +23,5 @@ bench-%:
 	@go test -run=^$$ -bench=$* -benchmem ./...
 
 clean:
-	@rm -rf build coverage.html c.out
+	@rm -rf build coverage.html c.out wk
 	@echo "clean done"
