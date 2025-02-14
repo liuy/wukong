@@ -3,7 +3,7 @@ Our goal is bringing AI innovation to everyone with affordable hardwares.
 </h3>
 
 ---
-WuKong is an easy-to-use framework for LLM inference and agent serving in golang from scratch.
+WuKong is an easy-to-use framework for LLM inference and agent serving in golang from scratch and try to solve the [issue](https://github.com/liuy/wukong/issues/1).
 
 ## Build from source
 ### Install dependency
