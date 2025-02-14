@@ -9,7 +9,7 @@ set(FILES
     wukong.h
 )
 add_library(wukong STATIC ${FILES})
-target_link_libraries(wukong -lcublasLt -lcudnn -lcublas)
+target_link_libraries(wukong -lcublasLt -lcublas)
 set_target_properties(wukong PROPERTIES CUDA_ARCHITECTURES "native")
 
 option(CF_TEST "Enable tests" off)
@@ -17,7 +17,7 @@ if(CF_TEST)
     enable_testing()
     find_package(GTest)
     add_executable(test_cuda test_cuda.cu ${FILES})
-    target_link_libraries(test_cuda GTest::gtest_main -lcublasLt -lcudnn -lcublas)
+    target_link_libraries(test_cuda GTest::gtest_main -lcublasLt -lcublas)
     gtest_discover_tests(test_cuda)
 endif()
 

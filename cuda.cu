@@ -47,7 +47,6 @@ static void* cublaslt_workspace = NULL;
 static cublasComputeType_t cublas_compute_type;
 static cublasLtHandle_t cublaslt_handle;
 static cublasHandle_t cublas_handle;
-static cudnnHandle_t cudnn_handle;
 __attribute_maybe_unused__ static int cuda_arch_major = 0;
 __attribute_maybe_unused__ static int cuda_arch_minor = 0;
 __attribute_maybe_unused__ static int cuda_num_SMs = 0; // for persistent threads where we want 1 threadblock per SM
@@ -672,7 +671,6 @@ void cuda_init(void)
     // printf("CUDA device: %s, major %d, minor %d, num_SMs: %d, threads_per_SM: %d, threads_per_block: %d, warp_size: %d\n",
     //        deviceProp.name, cuda_arch_major, cuda_arch_minor, cuda_num_SMs, cuda_threads_per_SM, cuda_threads_per_block, cuda_warp_size);
 
-    cudnn_check(cudnnCreate(&cudnn_handle));
     cublas_check(cublasCreate(&cublas_handle));
     cublas_check(cublasLtCreate(&cublaslt_handle));
     cuda_check(cudaMalloc(&cublaslt_workspace, cublaslt_workspace_size));
@@ -686,7 +684,6 @@ void cuda_fini(void)
 {
     cuda_check(cudaFree(cublaslt_workspace));
     cublas_check(cublasLtDestroy(cublaslt_handle));
-    cudnn_check(cudnnDestroy(cudnn_handle));
 }
 
 
