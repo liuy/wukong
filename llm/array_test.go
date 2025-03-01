@@ -14,7 +14,7 @@ import (
 )
 
 func TestMain(m *testing.M) {
-	CudaSetup()
+	CudaSetup(0)
 	m.Run()
 	CudaTeardown()
 }

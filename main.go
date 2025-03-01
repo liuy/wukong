@@ -25,6 +25,15 @@ func runHandler(ctx context.Context, c *cmd.Command) error {
 	if c.Arg(0) == "" {
 		return fmt.Errorf("missing model name")
 	}
+	idx := c.GetInt("--gpu")
+	if idx < 0 {
+		return fmt.Errorf("invalid GPU index")
+	}
+	llm.CudaSetup(idx)
+	defer llm.CudaTeardown()
+
+	runtime.LockOSThread() // Required for CUDA functions to run in the same OS thread to get the same device context
+
 	model, err := llm.NewModel(ctx, c.Arg(0))
 	if err != nil {
 		return err
@@ -143,9 +152,6 @@ func runHandler(ctx context.Context, c *cmd.Command) error {
 }
 
 func main() {
-	llm.CudaSetup()
-	runtime.LockOSThread() // Required for CUDA functions to run in the same OS thread to get the same device context
-
 	m := cmd.NewCommand("wk", "A simple cmdline for wukong",
 		func(ctx context.Context, c *cmd.Command) error {
 			if c.GetBool("--version") {
@@ -157,6 +163,8 @@ func main() {
 		})
 
 	run := cmd.NewCommand("run", "Run the model", runHandler)
+	run.SetInt("-g", "--gpu", 0, "GPU device to use")
+
 	pull := cmd.NewCommand("pull", "Pull the model", func(ctx context.Context, c *cmd.Command) error {
 		if c.Arg(0) == "" {
 			return fmt.Errorf("missing model name")

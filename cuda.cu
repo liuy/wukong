@@ -654,9 +654,11 @@ __global__ void argmax_kernel(int *out, const float *inp, int row, int col)
 }
 
 extern "C" {
-void cuda_init(void)
+void cuda_init(int idx)
 {
     srand(0);   // determinism
+
+    deviceIdx = idx;
 
     cuda_check(cudaSetDevice(deviceIdx));
     cuda_check(cudaStreamCreate(&main_stream));
@@ -672,6 +674,7 @@ void cuda_init(void)
     cuda_max_shared_mem_per_block = deviceProp.sharedMemPerBlock;
     // printf("CUDA device: %s, major %d, minor %d, num_SMs: %d, threads_per_SM: %d, threads_per_block: %d, warp_size: %d\n",
     //        deviceProp.name, cuda_arch_major, cuda_arch_minor, cuda_num_SMs, cuda_threads_per_SM, cuda_threads_per_block, cuda_warp_size);
+    printf("Running on GPU %d: %s, Compute Capability %d.%d\n", deviceIdx, deviceProp.name, cuda_arch_major, cuda_arch_minor);
 
     cublas_check(cublasCreate(&cublas_handle));
     cublas_check(cublasLtCreate(&cublaslt_handle));

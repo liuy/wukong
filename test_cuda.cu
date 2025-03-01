@@ -11,7 +11,7 @@ static inline void assert_array_eq(const float *a, const float *b, size_t n)
 
 class cudaEnv : public ::testing::Environment {
 public:
-  void SetUp() override { cuda_init(); }
+  void SetUp() override { cuda_init(0); }
   void TearDown() override { cuda_fini(); }
 };
 

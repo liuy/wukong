@@ -1,4 +1,4 @@
-void cuda_init(void);
+void cuda_init(int idx);
 void cuda_fini(void);
 void* cuda_malloc(size_t size);
 void cuda_to_host(void* dst, void* src, size_t size);

@@ -22,6 +22,24 @@ func TestFlagSet(t *testing.T) {
 
 	err = fs.parse([]string{"--unknown"})
 	assert.Error(t, err)
+
+	// Test integer flags
+	fs = NewFlagSet()
+	fs.SetInt("-n", "--number", 0, "a number flag")
+
+	// Test valid integer input
+	err = fs.parse([]string{"--number", "42"})
+	assert.NoErr(t, err)
+	assert.Equal(t, 42, fs.GetInt("--number"))
+	assert.Equal(t, 42, fs.GetInt("-n"))
+
+	// Test missing value for integer flag
+	err = fs.parse([]string{"--number"})
+	assert.Error(t, err)
+
+	// Test invalid integer format
+	err = fs.parse([]string{"--number", "not-a-number"})
+	assert.Error(t, err)
 }
 
 func TestCommand(t *testing.T) {
