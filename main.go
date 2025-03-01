@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"runtime"
 	"strings"
 
 	"github.com/liuy/wukong/cmd"
@@ -31,8 +30,6 @@ func runHandler(ctx context.Context, c *cmd.Command) error {
 	}
 	llm.CudaSetup(idx)
 	defer llm.CudaTeardown()
-
-	runtime.LockOSThread() // Required for CUDA functions to run in the same OS thread to get the same device context
 
 	model, err := llm.NewModel(ctx, c.Arg(0))
 	if err != nil {

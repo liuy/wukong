@@ -373,8 +373,12 @@ func randFloatSlice(size int) any {
 	return slice
 }
 
-func CudaSetup(idx int) { C.cuda_init(C.int(idx)) }
-func CudaTeardown()     { C.cuda_fini() }
+func CudaSetup(idx int) {
+	C.cuda_init(C.int(idx))
+	runtime.LockOSThread() // Required for CUDA functions to run in the same OS thread to get the same device context
+}
+
+func CudaTeardown() { C.cuda_fini() }
 
 // Returns the element type of the Tensor
 func (a *Tensor) ElemType() DType { return a.dtype }

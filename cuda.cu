@@ -684,8 +684,7 @@ void cuda_init(int idx)
     cublas_check(cublasSetStream(cublas_handle, main_stream));
 
     // TF32 precision is equivalent to torch.set_float32_matmul_precision('high')
-    // int enable_tf32 = cuda_arch_major >= 8 ? 1 : 0;
-    int enable_tf32 = false;
+    int enable_tf32 = cuda_arch_major >= 8 ? 1 : 0;
     cublas_compute_type = enable_tf32 ? CUBLAS_COMPUTE_32F_FAST_TF32 : CUBLAS_COMPUTE_32F;
 }
 
