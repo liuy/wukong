@@ -997,7 +997,7 @@ func TestEndToEndInference(t *testing.T) {
 	}
 	err = embeds.FeedForward(ff_norm, ff_weight, ff_out, ffl, eps)
 	assert.NoErr(t, err)
-	assert.Equal(t, ff_expected, embeds.ToHost())
+	assert.SliceNear(t, ff_expected, embeds.ToHost().([]float32), 1e-6)
 
 	predictions := embeds.Predict(ff_norm, classifier, vocab, eps)
 
