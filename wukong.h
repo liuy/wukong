@@ -171,7 +171,7 @@ typedef Packed128<floatX> x128;
 } while (0)
 
 #define cuda_check(status) do { \
-    if ((status) != cudaSuccess) panic("CUDA error: %s", cudaGetErrorString(status)); \
+    if ((status) != cudaSuccess) panic("CUDA error (%d): %s", status, cudaGetErrorString(status)); \
 } while (0)
 
 #define cudnn_check(status) do { \

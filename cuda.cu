@@ -47,6 +47,8 @@ static void* cublaslt_workspace = NULL;
 static cublasComputeType_t cublas_compute_type;
 static cublasLtHandle_t cublaslt_handle;
 static cublasHandle_t cublas_handle;
+static cudaStream_t main_stream;
+static int deviceIdx = 0;
 __attribute_maybe_unused__ static int cuda_arch_major = 0;
 __attribute_maybe_unused__ static int cuda_arch_minor = 0;
 __attribute_maybe_unused__ static int cuda_num_SMs = 0; // for persistent threads where we want 1 threadblock per SM
@@ -447,7 +449,7 @@ void cuda_matmul_cublas(float *out, const float *inp, const float *weight, const
     if (bias != NULL) {
         int block_size = cuda_threads_per_block;
         int grid_size = CEIL_DIV(oc * row, block_size);
-        add_bias_kernel<<<grid_size, block_size>>>(out, bias, row, oc);
+        add_bias_kernel<<<grid_size, block_size, 0, main_stream>>>(out, bias, row, oc);
         cuda_check(cudaGetLastError());
     }
 }
@@ -496,8 +498,8 @@ void cuda_matmul_cublaslt(void *out, const void *inp, const void *weight, const 
         panic("No algorithm found: row=%d, column=%d, oc=%d, has_bias=%d", row, column, oc, has_bias);
 
     const float alpha = 1.0f, beta = 0.0f;
-    cublas_check(cublasLtMatmul(cublaslt_handle, desc, &alpha, weight, weight_layout, inp, inp_layout, &beta,
-                out, out_layout, out, out_layout, &heuristic.algo, cublaslt_workspace, cublaslt_workspace_size, 0));
+        cublas_check(cublasLtMatmul(cublaslt_handle, desc, &alpha, weight, weight_layout, inp, inp_layout, &beta,
+                out, out_layout, out, out_layout, &heuristic.algo, cublaslt_workspace, cublaslt_workspace_size, main_stream));
 
     cublas_check(cublasLtMatmulPreferenceDestroy(pref));
     cublas_check(cublasLtMatmulDescDestroy(desc));
@@ -656,9 +658,9 @@ void cuda_init(void)
 {
     srand(0);   // determinism
 
-    // set up the device
-    int deviceIdx = 0;
     cuda_check(cudaSetDevice(deviceIdx));
+    cuda_check(cudaStreamCreate(&main_stream));
+
     cudaDeviceProp deviceProp;
     cudaGetDeviceProperties(&deviceProp, deviceIdx);
     cuda_num_SMs = deviceProp.multiProcessorCount;
@@ -673,40 +675,48 @@ void cuda_init(void)
 
     cublas_check(cublasCreate(&cublas_handle));
     cublas_check(cublasLtCreate(&cublaslt_handle));
-    cuda_check(cudaMalloc(&cublaslt_workspace, cublaslt_workspace_size));
+    cublaslt_workspace = cuda_malloc(cublaslt_workspace_size);
+
+    // Set the stream for cublas handle
+    cublas_check(cublasSetStream(cublas_handle, main_stream));
 
     // TF32 precision is equivalent to torch.set_float32_matmul_precision('high')
-    int enable_tf32 = cuda_arch_major >= 8 ? 1 : 0;
+    // int enable_tf32 = cuda_arch_major >= 8 ? 1 : 0;
+    int enable_tf32 = false;
     cublas_compute_type = enable_tf32 ? CUBLAS_COMPUTE_32F_FAST_TF32 : CUBLAS_COMPUTE_32F;
 }
 
 void cuda_fini(void)
 {
-    cuda_check(cudaFree(cublaslt_workspace));
+    cuda_free(cublaslt_workspace);
+    cublas_check(cublasDestroy(cublas_handle));
     cublas_check(cublasLtDestroy(cublaslt_handle));
+    cuda_check(cudaStreamDestroy(main_stream));
 }
 
 
 void* cuda_malloc(size_t size)
 {
     void *ptr;
-    cuda_check(cudaMalloc(&ptr, size));
+    cuda_check(cudaMallocAsync(&ptr, size, main_stream));
     return ptr;
 }
 
 void cuda_free(void* ptr)
 {
-    cuda_check(cudaFree(ptr));
+    cuda_check(cudaFreeAsync(ptr, main_stream));
 }
 
 void cuda_to_device(void* dst, void* src, size_t size)
 {
-    cuda_check(cudaMemcpy(dst, src, size, cudaMemcpyHostToDevice));
+    cuda_check(cudaMemcpyAsync(dst, src, size, cudaMemcpyHostToDevice, main_stream));
 }
 
 void cuda_to_host(void* dst, void* src, size_t size)
 {
-    cuda_check(cudaMemcpy(dst, src, size, cudaMemcpyDeviceToHost));
+
+    cuda_check(cudaMemcpyAsync(dst, src, size, cudaMemcpyDeviceToHost, main_stream));
+    cuda_check(cudaStreamSynchronize(main_stream));
 }
 
 /*
@@ -744,7 +754,7 @@ void cuda_softmax(void* output, void* input, int row, int col)
 {
     const int block_size = 256;
     const int shared_mem_size = (2 * (block_size / WARP_SIZE)) * sizeof(float); // Space for max and sum values
-    softmax_kernel<<<row, block_size, shared_mem_size>>>((float *)output, (const float *)input, row, col);
+    softmax_kernel<<<row, block_size, shared_mem_size, main_stream>>>((float *)output, (const float *)input, row, col);
     cuda_check(cudaGetLastError());
 }
 
@@ -779,7 +789,7 @@ void cuda_gq_sdpa(void *out, const void *inp, int batch, int row, int qNH, int k
 void cuda_rmsnorm(void *out, const void *inp, const void *weight, int row, int col, float eps)
 {
     const int block_size = 256;
-    rmsnorm_kernel<<<row, block_size>>>((floatX *)out, (const floatX *)inp, (const floatX *)weight, row, col, eps);
+    rmsnorm_kernel<<<row, block_size, 0, main_stream>>>((floatX *)out, (const floatX *)inp, (const floatX *)weight, row, col, eps);
     cuda_check(cudaGetLastError());
 }
 
@@ -790,7 +800,7 @@ void cuda_swiglu(void *out, const void *inp, int batch, int row, int col)
 {
     int block_size = 256;
     int grid_size = CEIL_DIV(batch * row * col, block_size);
-    swiglu_kernel<<<grid_size, block_size>>>((floatX *)out, (const floatX *)inp, batch, row, col);
+    swiglu_kernel<<<grid_size, block_size, 0, main_stream>>>((floatX *)out, (const floatX *)inp, batch, row, col);
     cuda_check(cudaGetLastError());
 }
 
@@ -835,7 +845,7 @@ void cuda_mh_sdpa(void *out, const void *inp, int batch, int row, int NH, int HS
     int total_threads = batch * NH * row * HS;
     int block_size = 256;
     int num_blocks = CEIL_DIV(total_threads, block_size);
-    permute_kernel<<<num_blocks, block_size>>>(q, k, v, (const float*)inp, batch, row, NH, HS);
+    permute_kernel<<<num_blocks, block_size, 0, main_stream>>>(q, k, v, (const float*)inp, batch, row, NH, HS);
 
     const float alpha = 1.0f;
     const float beta = 0.0f;
@@ -856,7 +866,7 @@ void cuda_mh_sdpa(void *out, const void *inp, int batch, int row, int NH, int HS
     int softmax_block_size = 256;
     size_t shared_mem_size = 2 * (softmax_block_size / 32) * sizeof(float);
     int grid_size = batch * NH * row;
-    scaled_softmax_kernel<<<grid_size, softmax_block_size, shared_mem_size>>>(
+    scaled_softmax_kernel<<<grid_size, softmax_block_size, shared_mem_size, main_stream>>>(
         att, att, batch, NH, row, scale);
 
     // Batched matrix multiplication: attention @ V
@@ -872,7 +882,7 @@ void cuda_mh_sdpa(void *out, const void *inp, int batch, int row, int NH, int HS
 
     // Unpermute result from (batch, NH, row, HS) -> (batch, row, NH, HS)
     num_blocks = CEIL_DIV(batch * row * NH * HS, block_size);
-    unpermute_kernel<<<num_blocks, block_size>>>((float *)out, vatt, batch, row, NH, HS);
+    unpermute_kernel<<<num_blocks, block_size, 0, main_stream>>>((float *)out, vatt, batch, row, NH, HS);
 
     cuda_free(qkv);
     cuda_free(att);
@@ -914,7 +924,7 @@ void cuda_rope_qkv(void *out, const void *inp, const void *freqs, int batch, int
     // We only need threads for Q and K sections, V will be untouched
     int total_threads = batch * row * (NH + kvNH) * HS / 2;
     int num_blocks = CEIL_DIV(total_threads, block_size);
-    rope_qkv_kernel<<<num_blocks, block_size>>>((floatX *)out, (const floatX *)inp, (const floatX *)freqs,
+    rope_qkv_kernel<<<num_blocks, block_size, 0, main_stream>>>((floatX *)out, (const floatX *)inp, (const floatX *)freqs,
                                                batch, row, NH, kvNH, HS);
     cuda_check(cudaGetLastError());
 }
@@ -935,7 +945,7 @@ void cuda_rope(void *out, const void *inp, const void *freqs, int batch, int row
     int block_size = 256;
     int total_threads = batch * row * NH * HS / 2;  // divided by 2 since we process pairs
     int num_blocks = CEIL_DIV(total_threads, block_size);
-    rope_kernel<<<num_blocks, block_size>>>((floatX *)out, (const floatX *)inp, (const floatX *)freqs, batch, row, NH, HS);
+    rope_kernel<<<num_blocks, block_size, 0, main_stream>>>((floatX *)out, (const floatX *)inp, (const floatX *)freqs, batch, row, NH, HS);
     cuda_check(cudaGetLastError());
 }
 
@@ -963,12 +973,12 @@ void cuda_embedding(void* out, const void *inp, const void *embd, int batch, int
     const int grid_size = CEIL_DIV(N, block_size);
 
     if (dtype == GGML_TYPE_F32) {
-        get_embeddings_kernel<<<grid_size, block_size>>>(out, (const int*)inp, embd, batch, row, bytes_per_row);
+        get_embeddings_kernel<<<grid_size, block_size, 0, main_stream>>>(out, (const int*)inp, embd, batch, row, bytes_per_row);
         cuda_check(cudaGetLastError());
         return;
     }
     void *dout = cuda_malloc(batch * row * bytes_per_row);
-    get_embeddings_kernel<<<grid_size, block_size>>>(dout, (const int*)inp, embd, batch, row, bytes_per_row);
+    get_embeddings_kernel<<<grid_size, block_size, 0, main_stream>>>(dout, (const int*)inp, embd, batch, row, bytes_per_row);
     cuda_dequantize(out, dout, batch * row, col, dtype);
     cuda_check(cudaGetLastError());
     cuda_free(dout);
@@ -990,8 +1000,8 @@ void cuda_cat(void *out, const void *a, const void *b, int arow, int brow, int c
     size_t asize = arow * col * info.type_size / info.block_size;
     size_t bsize = brow * col * info.type_size / info.block_size;
 
-    cuda_check(cudaMemcpy(out, a, asize, cudaMemcpyDeviceToDevice));
-    cuda_check(cudaMemcpy((char *)out + asize, b, bsize, cudaMemcpyDeviceToDevice));
+    cuda_check(cudaMemcpyAsync(out, a, asize, cudaMemcpyDeviceToDevice, main_stream));
+    cuda_check(cudaMemcpyAsync((char *)out + asize, b, bsize, cudaMemcpyDeviceToDevice, main_stream));
 }
 
 /*
@@ -1008,7 +1018,7 @@ void cuda_div(void *out, const void *a, const void *b, int row, int col)
     int block_size = 256;
     int total_threads = row * col;
     int num_blocks = CEIL_DIV(total_threads, block_size);
-    div_kernel<<<num_blocks, block_size>>>((floatX *)out, (const floatX *)a, (const floatX *)b, row, col);
+    div_kernel<<<num_blocks, block_size, 0, main_stream>>>((floatX *)out, (const floatX *)a, (const floatX *)b, row, col);
     cuda_check(cudaGetLastError());
 }
 
@@ -1036,7 +1046,7 @@ void cuda_dequantize(void *out, const void *inp, int row, int col, int type)
     assert(shared_mem_size <= cuda_max_shared_mem_per_block);
     switch (type) {
     case GGML_TYPE_Q8_0:
-	    dequantize_Q8_0<<<num_blocks, block_size, shared_mem_size>>>((float *)out, (const block_q8_0 *)inp, row, nb, bs);
+	    dequantize_Q8_0<<<num_blocks, block_size, shared_mem_size, main_stream>>>((float *)out, (const block_q8_0 *)inp, row, nb, bs);
 	    break;
     default:
 	    panic("Unsupported quantization type: %s", dtype_infos[type].name);
@@ -1061,7 +1071,7 @@ void cuda_add(void* out, const void* a, const void* b, int row, int col)
     const int grid_size = CEIL_DIV(total_size, block_size * 4);
 
     assert(col % 4 == 0);
-    add_kernel<<<grid_size, block_size>>>((float*)out, (const float*)a, (const float*)b, row, col);
+    add_kernel<<<grid_size, block_size, 0, main_stream>>>((float*)out, (const float*)a, (const float*)b, row, col);
     cuda_check(cudaGetLastError());
 }
 
@@ -1105,7 +1115,7 @@ void cuda_repeat_qkv(void *out, const void *inp, int batch, int row, int qNH, in
     int num_blocks = CEIL_DIV(total_threads, block_size);
     int replicate_factor = qNH / kvNH;
     assert(replicate_factor > 1);
-    repeat_qkv_kernel<<<num_blocks, block_size>>>((floatX *)out, (const floatX *)inp, batch, row, qNH, HS, replicate_factor);
+    repeat_qkv_kernel<<<num_blocks, block_size, 0, main_stream>>>((floatX *)out, (const floatX *)inp, batch, row, qNH, HS, replicate_factor);
 }
 
 /*
@@ -1127,7 +1137,7 @@ void cuda_get_row(void *out, const void *inp, int batch, int row, int col, int i
     if (idx < 0)
         idx += row;
     assert(idx >= 0 && idx < row);
-    get_row_kernel<<<grid_size, block_size>>>((float *)out, (const float *)inp, batch, row, col, idx);
+    get_row_kernel<<<grid_size, block_size, 0, main_stream>>>((float *)out, (const float *)inp, batch, row, col, idx);
     cuda_check(cudaGetLastError());
 }
 
@@ -1143,7 +1153,7 @@ void cuda_argmax(void *out, const void *inp, int row, int col)
 {
     const int block_size = 256;
     const int grid_size = row;
-    argmax_kernel<<<grid_size, block_size>>>((int *)out, (const float *)inp, row, col);
+    argmax_kernel<<<grid_size, block_size, 0, main_stream>>>((int *)out, (const float *)inp, row, col);
     cuda_check(cudaGetLastError());
 }
 
