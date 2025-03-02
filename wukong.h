@@ -6,7 +6,6 @@
 #include <cuda_runtime.h>
 #include <cublasLt.h>
 #include <cublas_v2.h>
-#include <cudnn.h>
 #include <float.h>
 #include <cuda_bf16.h>
 #include <cooperative_groups.h>
