@@ -41,7 +41,7 @@ dtype_info dtype_infos[GGML_TYPE_COUNT] = {
     {"GGML_TYPE_TQ2_0", 256, 2 + 64}
 };
 
-// cuBLAS workspace. Hardcoding to 32MiB but only Hopper needs 32, for others 4 is OK
+// cuBLAS workspace. Only Hopper needs 32 MB, for others 4 is OK
 static size_t cublaslt_workspace_size = 4 * 1024 * 1024;
 static void* cublaslt_workspace = NULL;
 static cublasComputeType_t cublas_compute_type;
@@ -263,8 +263,8 @@ __global__ void unpermute_kernel(float *out, const float * inp, int B, int N, in
     }
 }
 
-__global__ void permute_kernel(floatX* q, floatX* k, floatX* v,
-                               const floatX* inp,
+__global__ void permute_kernel(float* q, float* k, float* v,
+                               const float* inp,
                                int B, int N, int NH, int d) {
     // okay so now, this kernel wants Q,K,V to all be of shape (B, NH, N, d)
     // but instead, we have a single tensor QKV (inp) of shape (B, N, 3, NH, d)
@@ -348,7 +348,7 @@ __global__ void rmsnorm_kernel(float* __restrict__ out, const float* __restrict_
     }
 }
 
-__global__ void swiglu_kernel(floatX* out, const floatX* inp, int B, int T, int C)
+__global__ void swiglu_kernel(float* out, const float* inp, int B, int T, int C)
 {
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
     if (idx < B * T * C) {
@@ -359,12 +359,12 @@ __global__ void swiglu_kernel(floatX* out, const floatX* inp, int B, int T, int 
         int fc1_idx = (b * T * 2 * C) + (t * 2 * C) + c;
         int fc2_idx = fc1_idx + C;
 
-        floatX swish_val = inp[fc2_idx] / (1.0f + expf(-inp[fc2_idx]));
+        float swish_val = inp[fc2_idx] / (1.0f + expf(-inp[fc2_idx]));
         out[idx] = swish_val * inp[fc1_idx];
     }
 }
 
-__global__ void rope_qkv_kernel(floatX* out, const floatX* inp, const floatX* freqs,
+__global__ void rope_qkv_kernel(float* out, const float* inp, const float* freqs,
                                 int batch, int row, int NH, int kvNH, int HS)
 {
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
@@ -392,7 +392,7 @@ __global__ void rope_qkv_kernel(floatX* out, const floatX* inp, const floatX* fr
     out[base + 1] = x_real * s + x_imag * c;
 }
 
-__global__ void rope_kernel(floatX *out, const floatX *inp, const floatX *freqs, int B, int T, int NH, int HS)
+__global__ void rope_kernel(float *out, const float *inp, const float *freqs, int B, int T, int NH, int HS)
 {
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
     int HS_half = HS / 2;
@@ -509,7 +509,7 @@ void cuda_matmul_cublaslt(void *out, const void *inp, const void *weight, const 
     cublas_check(cublasLtMatrixLayoutDestroy(bias_layout));
 }
 
-__global__ void div_kernel(floatX *out, const floatX *a, const floatX *b, int row, int col)
+__global__ void div_kernel(float *out, const float *a, const float *b, int row, int col)
 {
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
     int total_elements = row * col;
@@ -565,7 +565,7 @@ __global__ void add_kernel(float* out, const float* a, const float* b, int row, 
     out4[idx] = vout;
 }
 
-__global__ void repeat_qkv_kernel(floatX* replicated_qkv, const floatX* gqa_qkv,
+__global__ void repeat_qkv_kernel(float* replicated_qkv, const float* gqa_qkv,
                                int B, int N, int NH, int HD, int replicate_factor) {
     // we have a single tensor gqa_qkv of shape (B, N, (NH + 2*(NH/replicate_factor)) * HD)
     // we want to replicate it into (B, N, 3 * NH * HD)
@@ -791,7 +791,7 @@ void cuda_gq_sdpa(void *out, const void *inp, int batch, int row, int qNH, int k
 void cuda_rmsnorm(void *out, const void *inp, const void *weight, int row, int col, float eps)
 {
     const int block_size = 256;
-    rmsnorm_kernel<<<row, block_size, 0, main_stream>>>((floatX *)out, (const floatX *)inp, (const floatX *)weight, row, col, eps);
+    rmsnorm_kernel<<<row, block_size, 0, main_stream>>>((float *)out, (const float *)inp, (const float *)weight, row, col, eps);
     cuda_check(cudaGetLastError());
 }
 
@@ -802,7 +802,7 @@ void cuda_swiglu(void *out, const void *inp, int batch, int row, int col)
 {
     int block_size = 256;
     int grid_size = CEIL_DIV(batch * row * col, block_size);
-    swiglu_kernel<<<grid_size, block_size, 0, main_stream>>>((floatX *)out, (const floatX *)inp, batch, row, col);
+    swiglu_kernel<<<grid_size, block_size, 0, main_stream>>>((float *)out, (const float *)inp, batch, row, col);
     cuda_check(cudaGetLastError());
 }
 
@@ -926,7 +926,7 @@ void cuda_rope_qkv(void *out, const void *inp, const void *freqs, int batch, int
     // We only need threads for Q and K sections, V will be untouched
     int total_threads = batch * row * (NH + kvNH) * HS / 2;
     int num_blocks = CEIL_DIV(total_threads, block_size);
-    rope_qkv_kernel<<<num_blocks, block_size, 0, main_stream>>>((floatX *)out, (const floatX *)inp, (const floatX *)freqs,
+    rope_qkv_kernel<<<num_blocks, block_size, 0, main_stream>>>((float *)out, (const float *)inp, (const float *)freqs,
                                                batch, row, NH, kvNH, HS);
     cuda_check(cudaGetLastError());
 }
@@ -947,7 +947,7 @@ void cuda_rope(void *out, const void *inp, const void *freqs, int batch, int row
     int block_size = 256;
     int total_threads = batch * row * NH * HS / 2;  // divided by 2 since we process pairs
     int num_blocks = CEIL_DIV(total_threads, block_size);
-    rope_kernel<<<num_blocks, block_size, 0, main_stream>>>((floatX *)out, (const floatX *)inp, (const floatX *)freqs, batch, row, NH, HS);
+    rope_kernel<<<num_blocks, block_size, 0, main_stream>>>((float *)out, (const float *)inp, (const float *)freqs, batch, row, NH, HS);
     cuda_check(cudaGetLastError());
 }
 
@@ -1020,7 +1020,7 @@ void cuda_div(void *out, const void *a, const void *b, int row, int col)
     int block_size = 256;
     int total_threads = row * col;
     int num_blocks = CEIL_DIV(total_threads, block_size);
-    div_kernel<<<num_blocks, block_size, 0, main_stream>>>((floatX *)out, (const floatX *)a, (const floatX *)b, row, col);
+    div_kernel<<<num_blocks, block_size, 0, main_stream>>>((float *)out, (const float *)a, (const float *)b, row, col);
     cuda_check(cudaGetLastError());
 }
 
@@ -1117,7 +1117,7 @@ void cuda_repeat_qkv(void *out, const void *inp, int batch, int row, int qNH, in
     int num_blocks = CEIL_DIV(total_threads, block_size);
     int replicate_factor = qNH / kvNH;
     assert(replicate_factor > 1);
-    repeat_qkv_kernel<<<num_blocks, block_size, 0, main_stream>>>((floatX *)out, (const floatX *)inp, batch, row, qNH, HS, replicate_factor);
+    repeat_qkv_kernel<<<num_blocks, block_size, 0, main_stream>>>((float *)out, (const float *)inp, batch, row, qNH, HS, replicate_factor);
 }
 
 /*

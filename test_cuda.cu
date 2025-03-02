@@ -317,7 +317,7 @@ TEST(Cuda, cuda_swiglu)
 
 // Precompute the freqs of the RoPE rotation for the given HS(HeadSize) and theta
 // return array of size HS/2
-void get_freqs(floatX *freqs, int HS, float theta)
+void get_freqs(float *freqs, int HS, float theta)
 {
     // helper function that (on the CPU!) precomputes the freqs_cis for the RoPE rotation
     // same as precompute_freqs_cis_real in rope.py
@@ -349,7 +349,7 @@ void get_freqs(floatX *freqs, int HS, float theta)
 }
 
 // return array of size row * HS
-void get_freqs_cis(floatX *freqs_cis, int dim, int end, float theta, int use_scaled)
+void get_freqs_cis(float *freqs_cis, int dim, int end, float theta, int use_scaled)
 {
     // helper function that (on the CPU!) precomputes the freqs_cis for the RoPE rotation
     // same as precompute_freqs_cis_real in rope.py
