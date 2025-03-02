@@ -42,7 +42,7 @@ dtype_info dtype_infos[GGML_TYPE_COUNT] = {
 };
 
 // cuBLAS workspace. Hardcoding to 32MiB but only Hopper needs 32, for others 4 is OK
-static size_t cublaslt_workspace_size = 32 * 1024 * 1024;
+static size_t cublaslt_workspace_size = 4 * 1024 * 1024;
 static void* cublaslt_workspace = NULL;
 static cublasComputeType_t cublas_compute_type;
 static cublasLtHandle_t cublaslt_handle;
