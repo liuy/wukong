@@ -312,8 +312,9 @@ __global__ void swiglu_kernel(float* out, const float* inp, int B, int T, int C)
     }
 }
 
-__global__ void rope_qkv_kernel(float* out, const float* inp, const float* freqs,
-                                int batch, int row, int NH, int kvNH, int HS)
+template <typename T>
+__global__ void rope_qkv_kernel(T *out, const T *inp, const float *freqs,
+                               int batch, int row, int NH, int kvNH, int HS)
 {
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
     int HS_half = HS / 2;
@@ -333,11 +334,26 @@ __global__ void rope_qkv_kernel(float* out, const float* inp, const float* freqs
     float s = freqs[freq_idx + 1];
 
     int base = b * (row * (NH + 2 * kvNH) * HS) + r * ((NH + 2 * kvNH) * HS) + h * HS + 2 * d;
-    float x_real = inp[base];
-    float x_imag = inp[base + 1];
+    if constexpr (std::is_same<T, float>::value) {
+        float x_real = inp[base];
+        float x_imag = inp[base + 1];
 
-    out[base]     = x_real * c - x_imag * s;
-    out[base + 1] = x_real * s + x_imag * c;
+        float result_real = x_real * c - x_imag * s;
+        float result_imag = x_real * s + x_imag * c;
+
+        out[base] = result_real;
+        out[base + 1] = result_imag;
+    } else if constexpr (std::is_same<T, nv_bfloat16>::value) {
+	    float x_real = bf16_to_f32(inp[base]);
+	    float x_imag = bf16_to_f32(inp[base + 1]);
+
+	    float result_real = x_real * c - x_imag * s;
+	    float result_imag = x_real * s + x_imag * c;
+	    out[base] = f32_to_bf16(result_real);
+	    out[base + 1] = f32_to_bf16(result_imag);
+    } else {
+        panic("Unsupported type for rope_qkv_kernel");
+    }
 }
 
 __global__ void rope_kernel(float *out, const float *inp, const float *freqs, int B, int T, int NH, int HS)
@@ -402,7 +418,8 @@ void cuda_matmul_cublas(float *out, const float *inp, const float *weight, const
     }
 }
 
-void cuda_matmul_cublaslt(void *out, const void *inp, const void *weight, const void *bias,
+template<typename T>
+void cuda_matmul_cublaslt(T *out, const T *inp, const T *weight, const T *bias,
                         int row, int column, int oc)
 {
     int res;
@@ -414,24 +431,37 @@ void cuda_matmul_cublaslt(void *out, const void *inp, const void *weight, const 
     cublasOperation_t notrans = CUBLAS_OP_N;
     cublasOperation_t trans = CUBLAS_OP_T;
     cublasLtEpilogue_t epilogue = has_bias ? CUBLASLT_EPILOGUE_BIAS : CUBLASLT_EPILOGUE_DEFAULT;
+    cudaDataType_t data_type;
+    cublasComputeType_t compute_type;
+
+    if constexpr (std::is_same<T, float>::value) {
+        data_type = CUDA_R_32F;
+        compute_type = cublas_compute_type;
+    } else if constexpr (std::is_same<T, nv_bfloat16>::value) {
+        data_type = CUDA_R_16BF;
+        compute_type = CUBLAS_COMPUTE_32F;
+        // Forces any reductions during matrix multiplications to use the compute type and not the output type
+        cublasSetMathMode(cublas_handle, (cublasMath_t)(CUBLAS_DEFAULT_MATH | CUBLAS_MATH_DISALLOW_REDUCED_PRECISION_REDUCTION));
+    } else {
+        panic("Unsupported type for cuda_matmul_cublaslt");
+    }
 
     /*
      * Cuda is colum-major, for row-major Array, if we want to get: out = inp @ weight.T, 'out' should be 'out.T'.
      * Mathematically, out.T = weight @ inp.T. Since cuda is colum-major, 'weight' should be weight.T, 'inp.T' should be inp.
      * so calculating out.T = weight.T & inp.
      */
-    cublas_check(cublasLtMatmulDescCreate(&desc, cublas_compute_type, CUDA_R_32F));
-    cublas_check(cublasLtMatmulDescSetAttribute(desc, CUBLASLT_MATMUL_DESC_TRANSA, &trans, sizeof(notrans)));
+    cublas_check(cublasLtMatmulDescCreate(&desc, compute_type, CUDA_R_32F));
+    cublas_check(cublasLtMatmulDescSetAttribute(desc, CUBLASLT_MATMUL_DESC_TRANSA, &trans, sizeof(trans)));
     cublas_check(cublasLtMatmulDescSetAttribute(desc, CUBLASLT_MATMUL_DESC_TRANSB, &notrans, sizeof(notrans)));
     cublas_check(cublasLtMatmulDescSetAttribute(desc, CUBLASLT_MATMUL_DESC_EPILOGUE, &epilogue, sizeof(epilogue)));
 
     cublas_check(cublasLtMatmulDescSetAttribute(desc, CUBLASLT_MATMUL_DESC_BIAS_POINTER, &bias, sizeof(bias)));
 
-    cublas_check(cublasLtMatrixLayoutCreate(&weight_layout, CUDA_R_32F, column, oc, column));
-    cublas_check(cublasLtMatrixLayoutCreate(&inp_layout, CUDA_R_32F, column, row, column));
-    cublas_check(cublasLtMatrixLayoutCreate(&out_layout, CUDA_R_32F, oc, row, oc));
-    cublas_check(cublasLtMatrixLayoutCreate(&bias_layout, CUDA_R_32F, oc, 1, oc));
-
+    cublas_check(cublasLtMatrixLayoutCreate(&weight_layout, data_type, column, oc, column));
+    cublas_check(cublasLtMatrixLayoutCreate(&inp_layout, data_type, column, row, column));
+    cublas_check(cublasLtMatrixLayoutCreate(&out_layout, data_type, oc, row, oc));
+    cublas_check(cublasLtMatrixLayoutCreate(&bias_layout, data_type, oc, 1, oc));
 
     if (has_bias && (uintptr_t)bias % 16 != 0)
         panic("bias must be aligned to 16 bytes");
@@ -446,7 +476,7 @@ void cuda_matmul_cublaslt(void *out, const void *inp, const void *weight, const 
         panic("No algorithm found: row=%d, column=%d, oc=%d, has_bias=%d", row, column, oc, has_bias);
 
     const float alpha = 1.0f, beta = 0.0f;
-        cublas_check(cublasLtMatmul(cublaslt_handle, desc, &alpha, weight, weight_layout, inp, inp_layout, &beta,
+    cublas_check(cublasLtMatmul(cublaslt_handle, desc, &alpha, weight, weight_layout, inp, inp_layout, &beta,
                 out, out_layout, out, out_layout, &heuristic.algo, cublaslt_workspace, cublaslt_workspace_size, main_stream));
 
     cublas_check(cublasLtMatmulPreferenceDestroy(pref));
@@ -455,6 +485,30 @@ void cuda_matmul_cublaslt(void *out, const void *inp, const void *weight, const 
     cublas_check(cublasLtMatrixLayoutDestroy(inp_layout));
     cublas_check(cublasLtMatrixLayoutDestroy(out_layout));
     cublas_check(cublasLtMatrixLayoutDestroy(bias_layout));
+}
+
+void cuda_matmul_cublaslt_f32(void *out, const void *inp, const void *weight, const void *bias,
+                        int row, int column, int oc)
+{
+    cuda_matmul_cublaslt<float>(
+        static_cast<float*>(out),
+        static_cast<const float*>(inp),
+        static_cast<const float*>(weight),
+        static_cast<const float*>(bias),
+        row, column, oc
+    );
+}
+
+void cuda_matmul_cublaslt_bf16(void *out, const void *inp, const void *weight, const void *bias,
+                        int row, int column, int oc)
+{
+    cuda_matmul_cublaslt<nv_bfloat16>(
+        static_cast<nv_bfloat16*>(out),
+        static_cast<const nv_bfloat16*>(inp),
+        static_cast<const nv_bfloat16*>(weight),
+        static_cast<const nv_bfloat16*>(bias),
+        row, column, oc
+    );
 }
 
 __global__ void div_kernel(float *out, const float *a, const float *b, int row, int col)
@@ -601,10 +655,6 @@ __global__ void argmax_kernel(int *out, const float *inp, int row, int col)
     }
 }
 
-__device__ __forceinline__ __nv_bfloat16 float_to_bf16(float f) {
-    return __float2bfloat16(f);
-}
-
 template <typename T>
 __global__ void rmsnorm_kernel(T* __restrict__ out, const float* __restrict__ inp,
                               const float* __restrict__ weight, int N, int C, float eps)
@@ -658,7 +708,7 @@ __global__ void rmsnorm_kernel(T* __restrict__ out, const float* __restrict__ in
         if constexpr (std::is_same<T, float>::value) {
             __stcs(o + i, normalized);
         } else {
-            __stcs(o + i, float_to_bf16(normalized));
+            __stcs(o + i, f32_to_bf16(normalized));
         }
     }
 }
@@ -753,14 +803,17 @@ void cuda_to_host(void* dst, void* src, size_t size)
 void cuda_matmul(void *out, const void *inp, const void *weight, const void *bias,
                 int row, int column, int oc, int dtype)
 {
-    if (dtype != GGML_TYPE_F32) {
+    if (dtype == GGML_TYPE_BF16) {
+        return cuda_matmul_cublaslt_bf16(out, inp, weight, bias, row, column, oc);
+    } else if (dtype == GGML_TYPE_F32) {
+        return cuda_matmul_cublaslt_f32(out, inp, weight, bias, row, column, oc);
+    } else {
         void *dw = cuda_malloc(oc * column * sizeof(float));
         cuda_dequantize(dw, weight, oc, column, dtype);
-        cuda_matmul_cublaslt(out, inp, dw, bias, row, column, oc);
+        cuda_matmul_cublaslt_f32(out, inp, dw, bias, row, column, oc);
         cuda_free(dw);
         return;
     }
-    return cuda_matmul_cublaslt(out, inp, weight, bias, row, column, oc);
 }
 
 /*
@@ -813,7 +866,7 @@ void cuda_rmsnorm_f32(void *out, const void *inp, const void *weight, int row, i
 
 void cuda_rmsnorm_bf16(void *out, const void *inp, const void *weight, int row, int col, float eps)
 {
-    cuda_rmsnorm<__nv_bfloat16>((__nv_bfloat16 *)out, (const float *)inp, (const float *)weight, row, col, eps);
+    cuda_rmsnorm<nv_bfloat16>((nv_bfloat16 *)out, (const float *)inp, (const float *)weight, row, col, eps);
 }
 
 // swiglu: y = swish(fc2(x)) * fc1(x), where swish(x) = x / (1 + exp(-x)), fc1 and fc2 are fully connected layers
@@ -947,7 +1000,8 @@ void cuda_rope_qkv(void *out, const void *inp, const void *freqs, int batch, int
     // We only need threads for Q and K sections, V will be untouched
     int total_threads = batch * row * (NH + kvNH) * HS / 2;
     int num_blocks = CEIL_DIV(total_threads, block_size);
-    rope_qkv_kernel<<<num_blocks, block_size, 0, main_stream>>>((float *)out, (const float *)inp, (const float *)freqs,
+
+    rope_qkv_kernel<float><<<num_blocks, block_size, 0, main_stream>>>((float *)out, (const float *)inp, (const float *)freqs,
                                                batch, row, NH, kvNH, HS);
     cuda_check(cudaGetLastError());
 }

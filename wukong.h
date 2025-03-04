@@ -63,102 +63,19 @@ extern dtype_info dtype_infos[GGML_TYPE_COUNT];
 // scale = [s0, s1].astype(float16)
 // dequantized block = scale * [d0, d1, ..., d31]
 struct block_q8_0 {
-    __half scale; // 2 bytes for scale
+    half scale; // 2 bytes for scale
     int8_t d[32];  // 32 bytes for data in a block
 };
 
 #define WARP_SIZE 32U
-// ----------------------------------------------------------------------------
-// reduced/mixed precision utilities
 
-#if defined(ENABLE_BF16)
-    typedef __nv_bfloat16 floatX;
-    typedef __nv_bfloat16 floatN;
-    #define CUBLAS_LOWP CUDA_R_16BF // CUDA_R_16F or CUDA_R_16BF (or CUDA_R_32F)
-// CUBLAS_COMPUTE_32F or CUBLAS_COMPUTE_16F (for CUDA_R_16F only, potentially slower?!)
-    #define CUBLAS_LOWP_COMPUTE CUBLAS_COMPUTE_16F
-#elif defined(ENABLE_FP16)
-    typedef half floatX;
-    typedef half floatN;
-#else
-    #define CUBLAS_LOWP CUDA_R_32F // CUDA_R_16F or CUDA_R_16BF (or CUDA_R_32F)
-    #define CUBLAS_LOWP_COMPUTE CUBLAS_COMPUTE_32F
-    typedef float floatX;
-    typedef float floatN;
-#endif
-
-// ----------------------------------------------------------------------------
-// Packed128 data structure that forces the compiler to use 128-bit loads/stores
-// in GPUs that support (the LDG.128 and STS.128 instructions)
-// This is a bit similar to the use of float4 in the case of 32-bit floats, but
-// supports arbitrary precision.
-template<class ElementType>
-struct alignas(16) Packed128 {
-    Packed128() = default;
-    __device__ explicit Packed128(int4 bits) {
-        static_assert(sizeof(bits) == sizeof(payload), "Size mismatch.");
-        memcpy(&payload, &bits, sizeof(bits));
-    }
-
-    __device__  static Packed128 constant(ElementType value) {
-        Packed128 result;
-        for(int k = 0; k < size; ++k) {
-            result.payload[k] = value;
-        }
-        return result;
-    }
-    __device__ static Packed128 zeros() {
-        return constant(0.f);
-    }
-    __device__ static Packed128 ones() {
-        return constant(1.f);
-    }
-
-    __device__ ElementType& operator[](int index) {
-        return payload[index];
-    }
-    __device__ const ElementType& operator[](int index) const {
-        return payload[index];
-    }
-    __device__ int4 get_bits() const {
-        int4 bits;
-        static_assert(sizeof(bits) == sizeof(payload), "Size mismatch.");
-        memcpy(&bits, &payload, sizeof(bits));
-        return bits;
-    }
-    static constexpr const size_t size = sizeof(int4) / sizeof(ElementType);
-    ElementType payload[size];
-};
-
-// load a Packed128 from an aligned memory address
-template<class ElementType>
-__device__ Packed128<ElementType> load128(const ElementType* address) {
-    return Packed128<ElementType>{*reinterpret_cast<const int4*>(address)};
-}
-// load a Packed128 from an aligned memory address with streaming cache hint
-template<class ElementType>
-__device__ Packed128<ElementType> load128cs(const ElementType* address) {
-    return Packed128<ElementType>{__ldcs(reinterpret_cast<const int4*>(address))};
-}
-// store a Packed128 to an aligned memory address
-template<class ElementType>
-__device__ void store128(ElementType* target, Packed128<ElementType> value) {
-    *reinterpret_cast<int4*>(target) = value.get_bits();
-}
-// store a Packed128 to an aligned memory address with streaming cache hint
-template<class ElementType>
-__device__ void store128cs(ElementType* target, Packed128<ElementType> value) {
-    __stcs(reinterpret_cast<int4*>(target), value.get_bits());
-}
-// store a Packed128 to an aligned memory address while caching in L2 but bypassing L1
-template<class ElementType>
-__device__ void store128cg(ElementType* target, Packed128<ElementType> value) {
-    __stcg(reinterpret_cast<int4*>(target), value.get_bits());
+static __device__ __forceinline__ nv_bfloat16 f32_to_bf16(float f) {
+    return __float2bfloat16(f);
 }
 
-// short-form typedefs
-typedef Packed128<float> f128;
-typedef Packed128<floatX> x128;
+static __device__ __forceinline__ float bf16_to_f32(nv_bfloat16 f) {
+    return __bfloat162float(f);
+}
 
 #define panic(fmt, ...) do { \
     fprintf(stderr, "%s:%d:%s(): " fmt "\n", __FILE__, __LINE__, __func__, ##__VA_ARGS__); \
