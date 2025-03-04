@@ -127,10 +127,7 @@ type Runner interface {
 	ToHost(a *Tensor) any
 	DeviceFree(a *Tensor)
 	Embedding(embd, ids *Tensor) (*Tensor, error)
-	Rmsnorm(x, w *Tensor, eps float32) (*Tensor, error)
 	Cat(a, b *Tensor) (*Tensor, error)
-	DivInPlace(a, b *Tensor) error
-	RopeInPlace(a, b *Tensor) error
 	Dequantize(a *Tensor) (*Tensor, error)
 	GroupQueryAttention(embeds, freqs, norm_weight, qkv_weight, out_weight *Tensor, HS int, kvNH int, eps float32) error
 	FeedForward(attn, norm_weight, fc_weight, out_weight *Tensor, ffl int, eps float32) error
@@ -420,17 +417,8 @@ func (a *Tensor) DeviceFree() { a.Runner.DeviceFree(a) }
 // Embedding returns the embeddings of the given idsss
 func (a *Tensor) Embedding(ids *Tensor) (*Tensor, error) { return a.Runner.Embedding(a, ids) }
 
-// Rmsnorm returns the root mean square normalization of the given array
-func (a *Tensor) Rmsnorm(x *Tensor, eps float32) (*Tensor, error) { return a.Runner.Rmsnorm(a, x, eps) }
-
 // Cat returns the concatenation of the given arrays along the first dimension
 func (a *Tensor) Cat(b *Tensor) (*Tensor, error) { return a.Runner.Cat(a, b) }
-
-// DivInPlace divides the array a by b in place
-func (a *Tensor) DivInPlace(b *Tensor) error { return a.Runner.DivInPlace(a, b) }
-
-// RopeInPlace applies the rope operation to the array a in place
-func (a *Tensor) RopeInPlace(b *Tensor) error { return a.Runner.RopeInPlace(a, b) }
 
 // Dequantize dequantizes the tensor to float32
 func (a *Tensor) Dequantize() (*Tensor, error) { return a.Runner.Dequantize(a) }
@@ -691,20 +679,6 @@ func (r *cudaRunner) Embedding(embd, ids *Tensor) (*Tensor, error) {
 	return ret, nil
 }
 
-func (r *cudaRunner) Rmsnorm(a, x *Tensor, eps float32) (*Tensor, error) {
-	if x.GetDim(-1) != a.GetDim(-1) {
-		return nil, fmt.Errorf("weight shape does not match")
-	}
-	ne := x.Len()
-	col := x.GetDim(-1)
-	N := ne / col
-	out := C.cuda_malloc(C.size_t(ne * x.ElemTypeSize() / x.ElemBlockSize()))
-	C.cuda_rmsnorm(out, x.dptr, a.dptr, C.int(N), C.int(col), C.float(eps))
-	ret := NewTensor(x.Shape, x.dtype)
-	ret.dptr = out
-	return ret, nil
-}
-
 func (r *cudaRunner) Cat(a, b *Tensor) (*Tensor, error) {
 	if a.dtype != b.dtype {
 		return nil, fmt.Errorf("arrays must have the same dtype")
@@ -739,38 +713,6 @@ func slicesEqual(slice1, slice2 []int) bool {
 	}
 
 	return true
-}
-
-func (r *cudaRunner) DivInPlace(a, b *Tensor) error {
-	if a.dtype != b.dtype {
-		return fmt.Errorf("arrays must have the same dtype")
-	}
-	if !slicesEqual(a.Shape, b.Shape) {
-		return fmt.Errorf("array shapes do not match")
-	}
-	col := a.GetDim(-1)
-	row := a.GetDim(0)
-	C.cuda_div(a.dptr, a.dptr, b.dptr, C.int(row), C.int(col))
-	return nil
-}
-
-func (r *cudaRunner) RopeInPlace(a, b *Tensor) error {
-	if a.dtype != b.dtype {
-		return fmt.Errorf("arrays must have the same dtype")
-	}
-	if a.NumDims() > 3 || b.NumDims() != 1 {
-		return fmt.Errorf("arrays shapes are not supported")
-	}
-	batch := 1
-	if a.NumDims() == 3 {
-		batch = a.GetDim(0)
-	}
-	row := a.GetDim(-2)
-	col := a.GetDim(-1)
-	HS := b.GetDim(0) * 2
-	NH := col / HS
-	C.cuda_rope(a.dptr, a.dptr, b.dptr, C.int(batch), C.int(row), C.int(NH), C.int(HS))
-	return nil
 }
 
 func (r *cudaRunner) GroupQueryAttention(embeds, freqs, norm_weight, qkv_weight, out_weight *Tensor, NH int, kvNH int, eps float32) error {

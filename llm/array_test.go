@@ -2,7 +2,6 @@ package llm
 
 import (
 	"fmt"
-	"math"
 	"math/rand"
 	"os"
 	"reflect"
@@ -511,52 +510,6 @@ func TestMakeTensorFrom(t *testing.T) {
 	}
 }
 
-func TestTensorRmsnorm(t *testing.T) {
-	tests := []struct {
-		x        []float32
-		w        []float32
-		xShape   Shape
-		wShape   Shape
-		eps      float32
-		wantErr  bool
-		expected []float32
-	}{
-		{
-			x:        []float32{1.0, 2.0, 3.0, 4.0, 5.0, 6.0},
-			w:        []float32{0.5, 0.5, 0.5},
-			xShape:   Shape{2, 3},
-			wShape:   Shape{3},
-			eps:      1e-6,
-			wantErr:  false,
-			expected: []float32{0.231455, 0.462910, 0.694365, 0.394771, 0.493463, 0.592156},
-		},
-		{
-			x:       []float32{1.0, 2.0, 3.0, 4.0},
-			w:       []float32{0.5, 0.5, 0.5},
-			xShape:  Shape{2, 2},
-			wShape:  Shape{3},
-			eps:     1e-6,
-			wantErr: true,
-		},
-	}
-
-	for _, tt := range tests {
-		x, err := MakeTensorErr(tt.xShape, tt.x)
-		assert.NoErr(t, err)
-
-		w, err := MakeTensorErr(tt.wShape, tt.w)
-		assert.NoErr(t, err)
-
-		result, err := w.Rmsnorm(x, tt.eps)
-		if tt.wantErr {
-			assert.Error(t, err)
-			return
-		}
-		assert.NoErr(t, err)
-		assert.Equal(t, x.Shape, result.Shape)
-		assert.SliceNear(t, tt.expected, result.ToHost().([]float32), 1e-6)
-	}
-}
 func TestTensorCat(t *testing.T) {
 	tests := []struct {
 		aShape, bShape Shape
@@ -609,122 +562,6 @@ func TestTensorCat(t *testing.T) {
 	b, err := MakeTensorErr(Shape{2, 3}, []float32{7, 8, 9, 10, 11, 12})
 	assert.NoErr(t, err)
 	_, err = a.Cat(b)
-	assert.Error(t, err)
-}
-
-func TestTensorDivInPlace(t *testing.T) {
-	tests := []struct {
-		aShape, bShape Shape
-		aData, bData   []float32
-		expectedData   []float32
-		expectError    bool
-	}{
-		{
-			aShape: Shape{2, 3}, bShape: Shape{2, 3},
-			aData: []float32{2, 4, 6, 8, 10, 12}, bData: []float32{1, 2, 3, 4, 5, 6},
-			expectedData: []float32{2, 2, 2, 2, 2, 2},
-			expectError:  false,
-		},
-		{
-			aShape: Shape{2, 3}, bShape: Shape{2, 3},
-			aData:        []float32{2, 4, 6, 8, 10, -12},
-			bData:        []float32{1, 0, 3, 4, float32(math.Inf(1)), 0},
-			expectedData: []float32{2, float32(math.Inf(1)), 2, 2, 0, float32(math.Inf(-1))},
-			expectError:  false,
-		},
-		{
-			aShape: Shape{2, 3}, bShape: Shape{2, 2},
-			aData: []float32{2, 4, 6, 8, 10, 12}, bData: []float32{1, 2, 3, 4},
-			expectedData: nil,
-			expectError:  true,
-		},
-	}
-
-	for _, tt := range tests {
-		a, err := MakeTensorErr(tt.aShape, tt.aData)
-		assert.NoErr(t, err)
-		b, err := MakeTensorErr(tt.bShape, tt.bData)
-		assert.NoErr(t, err)
-
-		err = a.DivInPlace(b)
-		assert.Equal(t, tt.expectError, err != nil)
-		if err != nil {
-			continue
-		}
-
-		assert.Equal(t, tt.expectedData, a.ToHost().([]float32))
-	}
-}
-
-func TestTensorRopeInPlace(t *testing.T) {
-	tests := []struct {
-		aShape, posShape Shape
-		aData            []float32
-		bData            []float32
-		expectedData     []float32
-		expectError      bool
-	}{
-		{
-			aShape:   Shape{2, 2},
-			posShape: Shape{1},
-			aData:    []float32{1.0, 2.0, 3.0, 4.0},
-			bData:    []float32{1.0},
-			expectedData: []float32{
-				1.0, 2.0,
-				-1.7449772, 4.685622,
-			},
-			expectError: false,
-		},
-		{
-			aShape:   Shape{2, 2, 4},
-			posShape: Shape{2},
-			aData: []float32{
-				1.0, 2.0, 3.0, 4.0,
-				5.0, 6.0, 7.0, 8.0,
-				9.0, 10.0, 11.0, 12.0,
-				13.0, 14.0, 15.0, 16.0,
-			},
-			bData: []float32{1.0, 0.01},
-			expectedData: []float32{
-				1.000000, 2.000000, 3.000000, 4.000000,
-				-2.34731436, 7.44916821, 6.91965151, 8.06959915,
-				9.000000, 10.000000, 11.000000, 12.000000,
-				-4.75666428, 18.50335503, 14.83925247, 16.14919662,
-			},
-			expectError: false,
-		},
-		{
-			aShape:       Shape{2, 2},
-			posShape:     Shape{2, 1},
-			aData:        []float32{1.0, 2.0, 3.0, 4.0},
-			bData:        []float32{1.0, 1.0},
-			expectedData: nil,
-			expectError:  true,
-		},
-	}
-
-	for _, tt := range tests {
-		a, err := MakeTensorErr(tt.aShape, tt.aData)
-		assert.NoErr(t, err)
-		freqs, err := MakeTensorErr(tt.posShape, tt.bData)
-		assert.NoErr(t, err)
-
-		err = a.RopeInPlace(freqs)
-		assert.Equal(t, tt.expectError, err != nil)
-		if err != nil {
-			continue
-		}
-
-		result := a.ToHost().([]float32)
-		if tt.expectedData != nil {
-			assert.SliceNear(t, tt.expectedData, result, 1e-6)
-		}
-	}
-	a, err := MakeTensorErr(Shape{2, 2}, []float32{1, 2, 3, 4})
-	assert.NoErr(t, err)
-	freqs, err := MakeTensorErr(Shape{1}, []int{1})
-	assert.NoErr(t, err)
-	err = a.RopeInPlace(freqs)
 	assert.Error(t, err)
 }
 
