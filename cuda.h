@@ -9,7 +9,7 @@ void cuda_softmax(void* output, void* input, int row, int col);
 void cuda_mh_sdpa(void *out, const void *inp, int batch, int row, int NH, int HS);
 void cuda_gq_sdpa(void *out, const void *inp, int batch, int row, int qNH, int kvNH, int HS);
 void cuda_mq_sdpa(void *out, const void *inp, int batch, int row, int qNH, int HS);
-void cuda_rmsnorm(void *out, const void *inp, const void *weight, int row, int col, float eps);
+void cuda_rmsnorm_f32(void *out, const void *inp, const void *weight, int row, int col, float eps);
 void cuda_swiglu(void *out, const void *inp, int batch, int row, int col);
 void cuda_rope_qkv(void *out, const void *inp, const void *freqs, int batch, int row, int NH, int kvNH, int HS);
 void cuda_rope(void *out, const void *inp, const void *freqs, int batch, int row, int NH, int HS);

@@ -296,58 +296,6 @@ __global__ void add_bias_kernel(float* out, const float* bias, int T, int OC)
     }
 }
 
-__global__ void rmsnorm_kernel(float* __restrict__ out, const float* __restrict__ inp,
-                              const float* __restrict__ weight, int N, int C, float eps)
-{
-    namespace cg = cooperative_groups;
-    cg::thread_block block = cg::this_thread_block();
-    cg::thread_block_tile<WARP_SIZE> warp = cg::tiled_partition<WARP_SIZE>(block);
-
-    __shared__ float shared_sum2[WARP_SIZE]; // One element per warp for squared sum
-
-    int num_warps = blockDim.x / WARP_SIZE;
-    int warp_id = threadIdx.x / WARP_SIZE;
-    int lane_id = threadIdx.x % WARP_SIZE;
-    int idx = blockIdx.x; // One block per row
-
-    // Point to current sequence position
-    const float* x = inp + idx * C;
-
-    // Thread coarsening through the row
-    float thread_sum2 = 0.0f;
-
-    // Each thread accumulates multiple elements
-    for (int i = threadIdx.x; i < C; i += blockDim.x) {
-        float xi = x[i];
-        thread_sum2 += xi * xi;
-    }
-
-    // Warp-level reduction for sum of squares
-    float warp_sum2 = cg::reduce(warp, thread_sum2, cg::plus<float>{});
-
-    // Store warp-level results to shared memory
-    if (lane_id == 0) {
-        shared_sum2[warp_id] = warp_sum2;
-    }
-    __syncthreads();
-
-    // Load results from shared memory to threads, pad with zeros for out-of-bounds threads
-    warp_sum2 = (lane_id < num_warps) ? shared_sum2[lane_id] : 0.0f;
-
-    // Reduce the warp-level results
-    float block_sum2 = cg::reduce(warp, warp_sum2, cg::plus<float>{});
-
-    block_sum2 /= C; // mean(x**2)
-    float s = rsqrtf(block_sum2 + eps); // 1 / sqrt(mean(x**2) + eps)
-
-    // Apply normalization and scaling
-    float* o = out + idx * C;
-    for (int i = threadIdx.x; i < C; i += blockDim.x) {
-        float val = __ldcs(x + i);
-        __stcs(o + i, val * s * weight[i]); // x / sqrt(mean(x**2) + eps) * weight
-    }
-}
-
 __global__ void swiglu_kernel(float* out, const float* inp, int B, int T, int C)
 {
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
@@ -653,6 +601,76 @@ __global__ void argmax_kernel(int *out, const float *inp, int row, int col)
     }
 }
 
+__device__ __forceinline__ __nv_bfloat16 float_to_bf16(float f) {
+    return __float2bfloat16(f);
+}
+
+template <typename T>
+__global__ void rmsnorm_kernel(T* __restrict__ out, const float* __restrict__ inp,
+                              const float* __restrict__ weight, int N, int C, float eps)
+{
+    namespace cg = cooperative_groups;
+    cg::thread_block block = cg::this_thread_block();
+    cg::thread_block_tile<WARP_SIZE> warp = cg::tiled_partition<WARP_SIZE>(block);
+
+    __shared__ float shared_sum2[WARP_SIZE]; // One element per warp for squared sum
+
+    int num_warps = blockDim.x / WARP_SIZE;
+    int warp_id = threadIdx.x / WARP_SIZE;
+    int lane_id = threadIdx.x % WARP_SIZE;
+    int idx = blockIdx.x; // One block per row
+
+    // Point to current sequence position
+    const float* x = inp + idx * C;
+
+    // Thread coarsening through the row
+    float thread_sum2 = 0.0f;
+
+    // Each thread accumulates multiple elements
+    for (int i = threadIdx.x; i < C; i += blockDim.x) {
+        float xi = x[i];
+        thread_sum2 += xi * xi;
+    }
+
+    // Warp-level reduction for sum of squares
+    float warp_sum2 = cg::reduce(warp, thread_sum2, cg::plus<float>{});
+
+    // Store warp-level results to shared memory
+    if (lane_id == 0) {
+        shared_sum2[warp_id] = warp_sum2;
+    }
+    __syncthreads();
+
+    // Load results from shared memory to threads, pad with zeros for out-of-bounds threads
+    warp_sum2 = (lane_id < num_warps) ? shared_sum2[lane_id] : 0.0f;
+
+    // Reduce the warp-level results
+    float block_sum2 = cg::reduce(warp, warp_sum2, cg::plus<float>{});
+
+    block_sum2 /= C; // mean(x**2)
+    float s = rsqrtf(block_sum2 + eps); // 1 / sqrt(mean(x**2) + eps)
+
+    // Apply normalization and scaling
+    T* o = out + idx * C;
+    for (int i = threadIdx.x; i < C; i += blockDim.x) {
+        float val = __ldcs(x + i);
+        float normalized = val * s * weight[i]; // x / sqrt(mean(x**2) + eps) * weight
+        if constexpr (std::is_same<T, float>::value) {
+            __stcs(o + i, normalized);
+        } else {
+            __stcs(o + i, float_to_bf16(normalized));
+        }
+    }
+}
+
+template <typename T>
+void cuda_rmsnorm(T *out, const float *inp, const float *weight, int row, int col, float eps)
+{
+    const int block_size = 256;
+    rmsnorm_kernel<T><<<row, block_size, 0, main_stream>>>(out, inp, weight, row, col, eps);
+    cuda_check(cudaGetLastError());
+}
+
 extern "C" {
 void cuda_init(int idx)
 {
@@ -788,11 +806,14 @@ void cuda_gq_sdpa(void *out, const void *inp, int batch, int row, int qNH, int k
  * @param col: column size
  * @param eps: epsilon value
  */
-void cuda_rmsnorm(void *out, const void *inp, const void *weight, int row, int col, float eps)
+void cuda_rmsnorm_f32(void *out, const void *inp, const void *weight, int row, int col, float eps)
 {
-    const int block_size = 256;
-    rmsnorm_kernel<<<row, block_size, 0, main_stream>>>((float *)out, (const float *)inp, (const float *)weight, row, col, eps);
-    cuda_check(cudaGetLastError());
+    cuda_rmsnorm<float>((float *)out, (const float *)inp, (const float *)weight, row, col, eps);
+}
+
+void cuda_rmsnorm_bf16(void *out, const void *inp, const void *weight, int row, int col, float eps)
+{
+    cuda_rmsnorm<__nv_bfloat16>((__nv_bfloat16 *)out, (const float *)inp, (const float *)weight, row, col, eps);
 }
 
 // swiglu: y = swish(fc2(x)) * fc1(x), where swish(x) = x / (1 + exp(-x)), fc1 and fc2 are fully connected layers
@@ -974,7 +995,7 @@ void cuda_embedding(void* out, const void *inp, const void *embd, int batch, int
     const int N = batch * row;  // One thread per row
     const int grid_size = CEIL_DIV(N, block_size);
 
-    if (dtype == GGML_TYPE_F32) {
+    if (dtype == GGML_TYPE_F32 || dtype == GGML_TYPE_BF16) {
         get_embeddings_kernel<<<grid_size, block_size, 0, main_stream>>>(out, (const int*)inp, embd, batch, row, bytes_per_row);
         cuda_check(cudaGetLastError());
         return;
@@ -1087,7 +1108,7 @@ void cuda_group_query_attention(void *out, const void *embeds, const void *freqs
     output = cuda_malloc(batch * row * col * sizeof(float));
     qkv = cuda_malloc(batch * row * qkv_weight_row * sizeof(float));
 
-    cuda_rmsnorm(att, embeds, norm_weight, batch * row, col, eps);
+    cuda_rmsnorm_f32(att, embeds, norm_weight, batch * row, col, eps);
     cuda_matmul(qkv, att, qkv_weight, nullptr, batch * row, col, qkv_weight_row, dtype); // (batch * row, col) @ (qkv_weight_row, col)^T
     cuda_rope_qkv(qkv, qkv, freqs, batch, row, NH, kvNH, HS); // rope qkv in-place
     cuda_gq_sdpa(att, qkv, batch, row, NH, kvNH, HS);
@@ -1165,7 +1186,7 @@ void cuda_feed_forward(void *out, const void *attn, const void *norm_weight, con
     void *ffn = cuda_malloc(batch * row * col * sizeof(float));
     void *fc = cuda_malloc(batch * row * 2 * ffl * sizeof(float));
 
-    cuda_rmsnorm(ffn, attn, norm_weight, batch * row, col, eps);
+    cuda_rmsnorm_f32(ffn, attn, norm_weight, batch * row, col, eps);
     cuda_matmul(fc, ffn, fc_weight, nullptr, batch * row, col, 2 * ffl, dtype); // (batch * row, col) @ (2 * ffl, col)^T
     cuda_swiglu(fc, fc, batch, row, ffl); // update fc in-place
     cuda_matmul(ffn, fc, out_weight, nullptr, batch * row, ffl, col, dtype); // (batch * row, ffl) @ (col, ffl)^T
@@ -1181,7 +1202,7 @@ void cuda_classify(void *out, void *ff, const void *norm_weight, const void *out
 
     assert(batch * 2 <= row);
     cuda_get_row(ff, ff, batch, row, col, -1); // out shape: (batch, col)
-    cuda_rmsnorm(ffn, ff, norm_weight, batch, col, eps);
+    cuda_rmsnorm_f32(ffn, ff, norm_weight, batch, col, eps);
     cuda_matmul(out, ffn, out_weight, nullptr, batch, col, wsize, dtype); // (batch, col) @ (wsize, col)^T
 }
 
