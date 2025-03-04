@@ -446,7 +446,7 @@ func (g *GGUFFile) Format(st fmt.State, r rune) {
 		}
 	}
 	for name, info := range g.TensorInfos {
-		s += fmt.Sprintf("Name: %s, Dims: %v, Quant: %d\n", name, info.Dims, info.Type)
+		s += fmt.Sprintf("Name: %s, Dims: %v, Quant: %s\n", name, info.Dims, info.Type)
 	}
 	fmt.Fprint(st, s)
 }
