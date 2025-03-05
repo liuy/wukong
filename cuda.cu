@@ -503,7 +503,8 @@ __global__ void get_row_kernel(T *out, const T *inp, int batch, int row, int col
     }
 }
 
-__global__ void argmax_kernel(int *out, const float *inp, int row, int col)
+template <typename T>
+__global__ void argmax_kernel(int *out, const T *inp, int row, int col)
 {
     __shared__ float smax[WARP_SIZE];  // Max values per warp
     __shared__ int sidx[WARP_SIZE];    // Corresponding indices
@@ -520,7 +521,13 @@ __global__ void argmax_kernel(int *out, const float *inp, int row, int col)
     int max_idx = -1;
 
     for (int i = tid; i < col; i += blockDim.x) {
-        float val = inp[r * col + i];
+        float val;
+        if constexpr (std::is_same<T, float>::value) {
+            val = inp[r * col + i];
+        } else if constexpr (std::is_same<T, nv_bfloat16>::value) {
+            val = bf16_to_f32(inp[r * col + i]);
+        }
+
         if (val > max_val) {
             max_val = val;
             max_idx = i;
@@ -1332,7 +1339,7 @@ void cuda_argmax(void *out, const void *inp, int row, int col)
 {
     const int block_size = 256;
     const int grid_size = row;
-    argmax_kernel<<<grid_size, block_size, 0, main_stream>>>((int *)out, (const float *)inp, row, col);
+    argmax_kernel<float><<<grid_size, block_size, 0, main_stream>>>((int *)out, (const float *)inp, row, col);
     cuda_check(cudaGetLastError());
 }
 
