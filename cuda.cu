@@ -492,13 +492,14 @@ __global__ void repeat_qkv_kernel(T* __restrict__ replicated_qkv, const T* __res
     replicated_qkv[idx_flat] = __ldcs(&gqa_qkv[inp_idx]);
 }
 
-__global__ void get_row_kernel(float *out, const float *inp, int batch, int row, int col, int idx)
+template <typename T>
+__global__ void get_row_kernel(T *out, const T *inp, int batch, int row, int col, int idx)
 {
     int b = blockIdx.x * blockDim.x + threadIdx.x;
     if (b < batch) {
-        const float *src = inp + b * row * col + idx * col;
-        float *dst = out + b * col;
-        memcpy(dst, src, col * sizeof(float));
+        const T *src = inp + b * row * col + idx * col;
+        T *dst = out + b * col;
+        memcpy(dst, src, col * sizeof(T));
     }
 }
 
@@ -1315,7 +1316,7 @@ void cuda_get_row(void *out, const void *inp, int batch, int row, int col, int i
     if (idx < 0)
         idx += row;
     assert(idx >= 0 && idx < row);
-    get_row_kernel<<<grid_size, block_size, 0, main_stream>>>((float *)out, (const float *)inp, batch, row, col, idx);
+    get_row_kernel<float><<<grid_size, block_size, 0, main_stream>>>((float *)out, (const float *)inp, batch, row, col, idx);
     cuda_check(cudaGetLastError());
 }
 
