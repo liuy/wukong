@@ -83,93 +83,6 @@ __device__ __forceinline__ void warp_reduce_max(float& val, int& idx) {
     }
 }
 
-// Handles both scaling of attention scores and softmax computation with causal masking
-// inp/out shape: (B, NH, T, T)
-__global__ void scaled_softmax_kernel(float* out, const float* inp, int B, int NH, int T, float scale)
- {
-    extern __shared__ float shared[];
-    int batch_idx = blockIdx.x / (NH * T); // batch index
-    int head_idx = (blockIdx.x / T) % NH;  // head index
-    int row_idx = blockIdx.x % T;          // row index within the attention matrix
-    int tid = threadIdx.x;
-    int warpId = threadIdx.x / WARP_SIZE;         // warp index within a block
-    int laneId = threadIdx.x % WARP_SIZE;         // thread index within a warp
-    int warpsPerBlock = blockDim.x / WARP_SIZE;
-
-    // shared memory layout: first half for max values, second half for sum values
-    float* maxvals = shared;
-    float* sumvals = &shared[warpsPerBlock];
-
-    // calculate base index for this thread block's row
-    int row_start = (batch_idx * NH * T * T) + (head_idx * T * T) + (row_idx * T);
-    const float* x = inp + row_start;
-
-    // Step 1: Find maximum while applying scale and causal mask
-    float maxval = -INFINITY;
-    for (int i = tid; i < T; i += blockDim.x) {
-        float val = (i <= row_idx) ? x[i] * scale : -INFINITY;
-        maxval = fmaxf(maxval, val);
-    }
-
-    // warp-level reduction for maxval
-    maxval = warp_reduce_max(maxval);
-
-    // write per-warp maxval to shared memory
-    if (laneId == 0) maxvals[warpId] = maxval;
-    __syncthreads();
-
-    // final reduction for maxval across warps
-    if (tid == 0) {
-        float val = maxvals[0];
-        for (int i = 1; i < warpsPerBlock; i++) {
-            val = fmaxf(val, maxvals[i]);
-        }
-        maxvals[0] = val;
-    }
-    __syncthreads();
-
-    // broadcast max to all threads
-    float offset = maxvals[0];
-
-    // Step 2: Compute exp(x - max) while respecting causal mask
-    float sumval = 0.0f;
-    for (int i = tid; i < T; i += blockDim.x) {
-        float val = (i <= row_idx) ? expf(x[i] * scale - offset) : 0.0f;
-        out[row_start + i] = val;  // store intermediate result
-        sumval += val;
-    }
-
-    // warp-level reduction for sum
-    sumval = warpReduceSum(sumval);
-
-    // write per-warp sum to shared memory
-    if (laneId == 0) sumvals[warpId] = sumval;
-    __syncthreads();
-
-    // final reduction for sum across warps
-    if (tid == 0) {
-        float val = sumvals[0];
-        for (int i = 1; i < warpsPerBlock; i++) {
-            val += sumvals[i];
-        }
-        sumvals[0] = val;
-    }
-    __syncthreads();
-
-    // Step 3: Normalize by sum
-    float sum = sumvals[0];
-    float inv_sum = 1.0f / sum;
-
-    // write final normalized values
-    for (int i = tid; i < T; i += blockDim.x) {
-        if (i <= row_idx) {
-            out[row_start + i] *= inv_sum;
-        } else {
-            out[row_start + i] = 0.0f;
-        }
-    }
-}
-
 __global__ void softmax_kernel(float* output, const float* input, int row, int col) {
     extern __shared__ float shared_mem[];
     float* row_max = shared_mem;                    // First part of shared memory for max values
@@ -242,48 +155,6 @@ __global__ void softmax_kernel(float* output, const float* input, int row, int c
     for (int i = tid; i < col; i += blockDim.x) {
         output[row_idx * col + i] *= inv_sum;
     }
-}
-
-__global__ void unpermute_kernel(float *out, const float * inp, int B, int N, int NH, int d)
-{
-   // out has shape (B, nh, N, d) but we need to unpermute it to (B, N, nh, d)
-    int idx = blockIdx.x * blockDim.x + threadIdx.x;
-
-    // out[b][n][nh_][d_] <- inp[b][nh_][n][d_]
-    if (idx < B * NH * N * d) {
-        int b = idx / (NH * N * d);
-        int rest = idx % (NH * N * d);
-        int nh_ = rest / (N * d);
-        rest = rest % (N * d);
-        int n = rest / d;
-        int d_ = rest % d;
-
-        int other_idx = (b * NH * N * d) + (n * NH * d) + (nh_ * d) + d_;
-        out[other_idx] = inp[idx];
-    }
-}
-
-__global__ void permute_kernel(float* q, float* k, float* v,
-                               const float* inp,
-                               int B, int N, int NH, int d) {
-    // okay so now, this kernel wants Q,K,V to all be of shape (B, NH, N, d)
-    // but instead, we have a single tensor QKV (inp) of shape (B, N, 3, NH, d)
-    int idx = blockIdx.x * blockDim.x + threadIdx.x;
-    if (idx >= B * NH * N * d) {
-        return;
-    }
-
-    // Q[b][nh_][n][d_] = inp[b][n][0][nh_][d_]
-    int b = idx / (NH * N * d);
-    int rest = idx % (NH * N * d);
-    int nh_ = rest / (N * d);
-    rest = rest % (N * d);
-    int n = rest / d;
-    int d_ = rest % d;
-    int inp_idx = (b * N * 3 * NH * d) + (n * 3 * NH * d) + (0 * NH * d) + (nh_ * d) + d_;
-    q[idx] = __ldcs(&inp[inp_idx]);
-    k[idx] = __ldcs(&inp[inp_idx + NH * d]);
-    v[idx] = __ldcs(&inp[inp_idx + 2 * (NH * d)]);
 }
 
 __global__ void add_bias_kernel(float* out, const float* bias, int T, int OC)
@@ -722,6 +593,261 @@ void cuda_rmsnorm(T *out, const float *inp, const float *weight, int row, int co
     cuda_check(cudaGetLastError());
 }
 
+template<typename T>
+__global__ void permute_kernel(T* q, T* k, T* v,
+                               const T* inp,
+                               int B, int N, int NH, int d)
+{
+    // okay so now, this kernel wants Q,K,V to all be of shape (B, NH, N, d)
+    // but instead, we have a single tensor QKV (inp) of shape (B, N, 3, NH, d)
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if (idx >= B * NH * N * d) {
+        return;
+    }
+
+    // Q[b][nh_][n][d_] = inp[b][n][0][nh_][d_]
+    int b = idx / (NH * N * d);
+    int rest = idx % (NH * N * d);
+    int nh_ = rest / (N * d);
+    rest = rest % (N * d);
+    int n = rest / d;
+    int d_ = rest % d;
+    int inp_idx = (b * N * 3 * NH * d) + (n * 3 * NH * d) + (0 * NH * d) + (nh_ * d) + d_;
+    q[idx] = __ldcs(&inp[inp_idx]);
+    k[idx] = __ldcs(&inp[inp_idx + NH * d]);
+    v[idx] = __ldcs(&inp[inp_idx + 2 * (NH * d)]);
+}
+
+template<typename T>
+__global__ void unpermute_kernel(T* __restrict__ out, const T* __restrict__ inp, int B, int N, int NH, int d)
+{
+   // out has shape (B, nh, N, d) but we need to unpermute it to (B, N, nh, d)
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+
+    // out[b][n][nh_][d_] <- inp[b][nh_][n][d_]
+    if (idx < B * NH * N * d) {
+        int b = idx / (NH * N * d);
+        int rest = idx % (NH * N * d);
+        int nh_ = rest / (N * d);
+        rest = rest % (N * d);
+        int n = rest / d;
+        int d_ = rest % d;
+
+        int other_idx = (b * NH * N * d) + (n * NH * d) + (nh_ * d) + d_;
+        out[other_idx] = inp[idx];
+    }
+}
+
+// Handles both scaling of attention scores and softmax computation with causal masking
+// inp/out shape: (B, NH, T, T)
+template<typename T>
+__global__ void scaled_softmax_kernel(T* out, const T* inp, int B, int NH, int TT, float scale)
+ {
+    extern __shared__ float shared[];
+    int batch_idx = blockIdx.x / (NH * TT); // batch index
+    int head_idx = (blockIdx.x / TT) % NH;  // head index
+    int row_idx = blockIdx.x % TT;          // row index within the attention matrix
+    int tid = threadIdx.x;
+    int warpId = threadIdx.x / WARP_SIZE;         // warp index within a block
+    int laneId = threadIdx.x % WARP_SIZE;         // thread index within a warp
+    int warpsPerBlock = blockDim.x / WARP_SIZE;
+
+    // shared memory layout: first half for max values, second half for sum values
+    float* maxvals = shared;
+    float* sumvals = &shared[warpsPerBlock];
+
+    // calculate base index for this thread block's row
+    int row_start = (batch_idx * NH * TT * TT) + (head_idx * TT * TT) + (row_idx * TT);
+    const T* x = inp + row_start;
+
+    // Step 1: Find maximum while applying scale and causal mask
+    float maxval = -INFINITY;
+    for (int i = tid; i < TT; i += blockDim.x) {
+        float val;
+        if constexpr (std::is_same<T, float>::value) {
+            val = (i <= row_idx) ? x[i] * scale : -INFINITY;
+        } else if constexpr (std::is_same<T, nv_bfloat16>::value) {
+            val = (i <= row_idx) ? bf16_to_f32(x[i]) * scale : -INFINITY;
+        }
+        maxval = fmaxf(maxval, val);
+    }
+
+    // warp-level reduction for maxval
+    maxval = warp_reduce_max(maxval);
+
+    // write per-warp maxval to shared memory
+    if (laneId == 0) maxvals[warpId] = maxval;
+    __syncthreads();
+
+    // final reduction for maxval across warps
+    if (tid == 0) {
+        float val = maxvals[0];
+        for (int i = 1; i < warpsPerBlock; i++) {
+            val = fmaxf(val, maxvals[i]);
+        }
+        maxvals[0] = val;
+    }
+    __syncthreads();
+
+    // broadcast max to all threads
+    float offset = maxvals[0];
+
+    // Step 2: Compute exp(x - max) while respecting causal mask
+    float sumval = 0.0f;
+    for (int i = tid; i < TT; i += blockDim.x) {
+        float val;
+        if (i <= row_idx) {
+            if constexpr (std::is_same<T, float>::value) {
+                val = expf(x[i] * scale - offset);
+            } else if constexpr (std::is_same<T, nv_bfloat16>::value) {
+                val = expf(bf16_to_f32(x[i]) * scale - offset);
+            }
+        } else {
+            val = 0.0f;
+        }
+
+        if constexpr (std::is_same<T, float>::value) {
+            out[row_start + i] = val;  // store intermediate result
+        } else if constexpr (std::is_same<T, nv_bfloat16>::value) {
+            out[row_start + i] = f32_to_bf16(val);  // store intermediate result
+        }
+        sumval += val;
+    }
+
+    // warp-level reduction for sum
+    sumval = warpReduceSum(sumval);
+
+    // write per-warp sum to shared memory
+    if (laneId == 0) sumvals[warpId] = sumval;
+    __syncthreads();
+
+    // final reduction for sum across warps
+    if (tid == 0) {
+        float val = sumvals[0];
+        for (int i = 1; i < warpsPerBlock; i++) {
+            val += sumvals[i];
+        }
+        sumvals[0] = val;
+    }
+    __syncthreads();
+
+    // Step 3: Normalize by sum
+    float sum = sumvals[0];
+    float inv_sum = 1.0f / sum;
+
+    // write final normalized values
+    for (int i = tid; i < TT; i += blockDim.x) {
+        if (i <= row_idx) {
+            if constexpr (std::is_same<T, float>::value) {
+                out[row_start + i] *= inv_sum;
+            } else if constexpr (std::is_same<T, nv_bfloat16>::value) {
+                nv_bfloat16 val = out[row_start + i] * f32_to_bf16(inv_sum);
+                out[row_start + i] = val;
+            }
+        } else {
+            if constexpr (std::is_same<T, float>::value) {
+                out[row_start + i] = 0.0f;
+            } else if constexpr (std::is_same<T, nv_bfloat16>::value) {
+                out[row_start + i] = f32_to_bf16(0.0f);
+            }
+        }
+    }
+}
+
+template<typename T>
+void cuda_mh_sdpa_impl(T *out, const T *inp, int batch, int row, int NH, int HS)
+{
+    T *qkv, *att, *vatt;
+
+    // Allocate space for broadcasted K and V
+    size_t q_size = (batch * NH * row * HS) * sizeof(T);
+    size_t qkv_size = 3 * q_size;
+    size_t att_size = batch * NH * row * row * sizeof(T);
+
+    qkv = (T *)cuda_malloc(qkv_size);
+    // try best to reuse input buffer
+    vatt = (T *)inp;
+    att = (T *)cuda_malloc(att_size);
+
+    T *q = qkv;
+    T *k = qkv + batch * NH * row * HS;
+    T *v = k + batch * NH * row * HS;
+
+    // Permute input
+    // q: (batch, row, NH, HS) -> (batch, NH, row, HS)
+    // k: (batch, row, NH, HS) -> (batch, NH, row, HS)
+    // v: (batch, row, NH, HS) -> (batch, NH, row, HS)
+    int total_threads = batch * NH * row * HS;
+    int block_size = 256;
+    int num_blocks = CEIL_DIV(total_threads, block_size);
+    permute_kernel<T><<<num_blocks, block_size, 0, main_stream>>>(q, k, v, inp, batch, row, NH, HS);
+
+    const float alpha = 1.0f;
+    const float beta = 0.0f;
+    cublasComputeType_t compute_type = cublas_compute_type;
+
+    cudaDataType data_type;
+    if constexpr (std::is_same<T, float>::value) {
+        data_type = CUDA_R_32F;
+    } else if constexpr (std::is_same<T, nv_bfloat16>::value) {
+        data_type = CUDA_R_16BF;
+        compute_type = CUBLAS_COMPUTE_32F;
+    } else {
+        panic("Unsupported type for cuda_mh_sdpa_impl");
+    }
+
+    // Batched matrix multiplication: Q @ K^T
+    cublas_check(cublasGemmStridedBatchedEx(cublas_handle,
+                            CUBLAS_OP_T, CUBLAS_OP_N,
+                            row, row, HS,
+                            &alpha,
+                            k, data_type, HS, row * HS,
+                            q, data_type, HS, row * HS,
+                            &beta,
+                            att, data_type, row, row * row,
+                            batch * NH,
+                            compute_type, CUBLAS_GEMM_DEFAULT
+                        ));
+
+    // Apply scaled softmax with causal masking
+    float scale = 1.0f / sqrtf(HS);
+    int softmax_block_size = 256;
+    size_t shared_mem_size = 2 * (softmax_block_size / 32) * sizeof(float);
+    int grid_size = batch * NH * row;
+    scaled_softmax_kernel<T><<<grid_size, softmax_block_size, shared_mem_size, main_stream>>>(
+        att, att, batch, NH, row, scale);
+
+    // Batched matrix multiplication: attention @ V
+    cublas_check(cublasGemmStridedBatchedEx(cublas_handle,
+                            CUBLAS_OP_N, CUBLAS_OP_N,
+                            HS, row, row,
+                            &alpha,
+                            v, data_type, HS, row * HS,
+                            att, data_type, row, row * row,
+                            &beta,
+                            vatt, data_type, HS, row * HS,
+                            batch * NH,
+                            compute_type, CUBLAS_GEMM_DEFAULT
+                        ));
+
+    // Unpermute result from (batch, NH, row, HS) -> (batch, row, NH, HS)
+    num_blocks = CEIL_DIV(batch * row * NH * HS, block_size);
+    unpermute_kernel<T><<<num_blocks, block_size, 0, main_stream>>>(out, vatt, batch, row, NH, HS);
+
+    cuda_free(qkv);
+    cuda_free(att);
+}
+
+void cuda_mh_sdpa_f32(void *out, const void *inp, int batch, int row, int NH, int HS)
+{
+    cuda_mh_sdpa_impl<float>((float*)out, (const float*)inp, batch, row, NH, HS);
+}
+
+void cuda_mh_sdpa_bf16(void *out, const void *inp, int batch, int row, int NH, int HS)
+{
+    cuda_mh_sdpa_impl<nv_bfloat16>((nv_bfloat16*)out, (const nv_bfloat16*)inp, batch, row, NH, HS);
+}
+
 extern "C" {
 void cuda_init(int idx)
 {
@@ -896,73 +1022,7 @@ void cuda_swiglu(void *out, const void *inp, int batch, int row, int col)
  */
 void cuda_mh_sdpa(void *out, const void *inp, int batch, int row, int NH, int HS)
 {
-    float *qkv, *att, *vatt;
-
-    // Allocate space for broadcasted K and V
-    size_t q_size = (batch * NH * row * HS) * sizeof(float);
-    size_t qkv_size = 3 * q_size;
-    size_t att_size = batch * NH * row * row * sizeof(float);
-
-    qkv = (float *)cuda_malloc(qkv_size);
-    // try best to reuse input buffer
-    vatt = (float *)inp;
-    att = (float *)cuda_malloc(att_size);
-
-    float *q = qkv;
-    float *k = qkv + batch * NH * row * HS;
-    float *v = k + batch * NH * row * HS;
-
-    // Permute input
-    // q: (batch, row, NH, HS) -> (batch, NH, row, HS)
-    // k: (batch, row, NH, HS) -> (batch, NH, row, HS)
-    // v: (batch, row, NH, HS) -> (batch, NH, row, HS)
-    //
-    // Tradeoff: it uses more memory for the broadcasted K and V tensors, but this should be acceptable
-    // given the benefits in simplicity and performance improvements (remove for-loop in following matmul)
-    int total_threads = batch * NH * row * HS;
-    int block_size = 256;
-    int num_blocks = CEIL_DIV(total_threads, block_size);
-    permute_kernel<<<num_blocks, block_size, 0, main_stream>>>(q, k, v, (const float*)inp, batch, row, NH, HS);
-
-    const float alpha = 1.0f;
-    const float beta = 0.0f;
-
-    // Batched matrix multiplication: Q @ K^T
-    cublas_check(cublasSgemmStridedBatched(cublas_handle,
-                            CUBLAS_OP_T, CUBLAS_OP_N,
-                            row, row, HS,
-                            &alpha,
-                            k, HS, row * HS,
-                            q, HS, row * HS,
-                            &beta,
-                            att, row, row * row,
-                            batch * NH));
-
-    // Apply scaled softmax with causal masking
-    float scale = 1.0f / sqrtf(HS);
-    int softmax_block_size = 256;
-    size_t shared_mem_size = 2 * (softmax_block_size / 32) * sizeof(float);
-    int grid_size = batch * NH * row;
-    scaled_softmax_kernel<<<grid_size, softmax_block_size, shared_mem_size, main_stream>>>(
-        att, att, batch, NH, row, scale);
-
-    // Batched matrix multiplication: attention @ V
-    cublas_check(cublasSgemmStridedBatched(cublas_handle,
-                            CUBLAS_OP_N, CUBLAS_OP_N,
-                            HS, row, row,
-                            &alpha,
-                            v, HS, row * HS,
-                            att, row, row * row,
-                            &beta,
-                            vatt, HS, row * HS,
-                            batch * NH));
-
-    // Unpermute result from (batch, NH, row, HS) -> (batch, row, NH, HS)
-    num_blocks = CEIL_DIV(batch * row * NH * HS, block_size);
-    unpermute_kernel<<<num_blocks, block_size, 0, main_stream>>>((float *)out, vatt, batch, row, NH, HS);
-
-    cuda_free(qkv);
-    cuda_free(att);
+    cuda_mh_sdpa_f32(out, inp, batch, row, NH, HS);
 }
 
 /*
