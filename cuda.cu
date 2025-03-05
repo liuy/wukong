@@ -167,19 +167,30 @@ __global__ void add_bias_kernel(float* out, const float* bias, int T, int OC)
     }
 }
 
-__global__ void swiglu_kernel(float* out, const float* inp, int B, int T, int C)
+template <typename T>
+__global__ void swiglu_kernel(T* out, const T* inp, int B, int TT, int C)
 {
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
-    if (idx < B * T * C) {
-        int b = idx / (T * C);
-        int t = (idx / C) % T;
+    if (idx < B * TT * C) {
+        int b = idx / (TT * C);
+        int t = (idx / C) % TT;
         int c = idx % C;
 
-        int fc1_idx = (b * T * 2 * C) + (t * 2 * C) + c;
+        int fc1_idx = (b * TT * 2 * C) + (t * 2 * C) + c;
         int fc2_idx = fc1_idx + C;
 
-        float swish_val = inp[fc2_idx] / (1.0f + expf(-inp[fc2_idx]));
-        out[idx] = swish_val * inp[fc1_idx];
+        if constexpr (std::is_same<T, float>::value) {
+            float swish_val = inp[fc2_idx] / (1.0f + expf(-inp[fc2_idx]));
+            out[idx] = swish_val * inp[fc1_idx];
+        } else if constexpr (std::is_same<T, nv_bfloat16>::value) {
+            float x2 = bf16_to_f32(inp[fc2_idx]);
+            float x1 = bf16_to_f32(inp[fc1_idx]);
+
+            float swish_val = x2 / (1.0f + expf(-x2));
+            float result = swish_val * x1;
+
+            out[idx] = f32_to_bf16(result);
+        }
     }
 }
 
@@ -1014,7 +1025,16 @@ void cuda_swiglu(void *out, const void *inp, int batch, int row, int col)
 {
     int block_size = 256;
     int grid_size = CEIL_DIV(batch * row * col, block_size);
-    swiglu_kernel<<<grid_size, block_size, 0, main_stream>>>((float *)out, (const float *)inp, batch, row, col);
+    swiglu_kernel<float><<<grid_size, block_size, 0, main_stream>>>((float *)out, (const float *)inp, batch, row, col);
+    cuda_check(cudaGetLastError());
+}
+
+// Add a new function for bf16 swiglu
+void cuda_swiglu_bf16(void *out, const void *inp, int batch, int row, int col)
+{
+    int block_size = 256;
+    int grid_size = CEIL_DIV(batch * row * col, block_size);
+    swiglu_kernel<nv_bfloat16><<<grid_size, block_size, 0, main_stream>>>((nv_bfloat16 *)out, (const nv_bfloat16 *)inp, batch, row, col);
     cuda_check(cudaGetLastError());
 }
 
