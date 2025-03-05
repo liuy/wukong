@@ -567,7 +567,8 @@ __global__ void add_kernel(float* out, const float* a, const float* b, int row, 
     out4[idx] = vout;
 }
 
-__global__ void repeat_qkv_kernel(float* replicated_qkv, const float* gqa_qkv,
+template <typename T>
+__global__ void repeat_qkv_kernel(T* __restrict__ replicated_qkv, const T* __restrict__ gqa_qkv,
                                int B, int N, int NH, int HD, int replicate_factor) {
     // we have a single tensor gqa_qkv of shape (B, N, (NH + 2*(NH/replicate_factor)) * HD)
     // we want to replicate it into (B, N, 3 * NH * HD)
@@ -1192,7 +1193,7 @@ void cuda_repeat_qkv(void *out, const void *inp, int batch, int row, int qNH, in
     int num_blocks = CEIL_DIV(total_threads, block_size);
     int replicate_factor = qNH / kvNH;
     assert(replicate_factor > 1);
-    repeat_qkv_kernel<<<num_blocks, block_size, 0, main_stream>>>((float *)out, (const float *)inp, batch, row, qNH, HS, replicate_factor);
+    repeat_qkv_kernel<float><<<num_blocks, block_size, 0, main_stream>>>((float *)out, (const float *)inp, batch, row, qNH, HS, replicate_factor);
 }
 
 /*
