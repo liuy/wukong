@@ -416,7 +416,8 @@ __global__ void dequantize_Q8_0(float *out, const block_q8_0 *inp, int row, int 
     }
 }
 
-__global__ void add_kernel(float* out, const float* a, const float* b, int row, int col)
+template <typename T>
+__global__ void add_kernel(T* out, const T* a, const T* b, int row, int col)
 {
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
     int size = row * col;
@@ -424,18 +425,28 @@ __global__ void add_kernel(float* out, const float* a, const float* b, int row, 
     if (idx >= size)
         return;
 
-    float4 *out4 = (float4 *)out;
-    const float4 *a4 = (const float4 *)a;
-    const float4 *b4 = (const float4 *)b;
+    if constexpr (std::is_same<T, float>::value) {
+        // Vectorized version for float - process 4 elements at once
+        float4 *out4 = (float4 *)out;
+        const float4 *a4 = (const float4 *)a;
+        const float4 *b4 = (const float4 *)b;
 
-    float4 va = a4[idx];
-    float4 vb = b4[idx];
-    float4 vout;
-    vout.x = va.x + vb.x;
-    vout.y = va.y + vb.y;
-    vout.z = va.z + vb.z;
-    vout.w = va.w + vb.w;
-    out4[idx] = vout;
+        float4 va = a4[idx];
+        float4 vb = b4[idx];
+        float4 vout;
+        vout.x = va.x + vb.x;
+        vout.y = va.y + vb.y;
+        vout.z = va.z + vb.z;
+        vout.w = va.w + vb.w;
+        out4[idx] = vout;
+    } else if constexpr (std::is_same<T, nv_bfloat16>::value) {
+        // Element-wise version for bfloat16
+        #pragma unroll
+        for (int i = 0; i < 4; i++) {
+            int element_idx = idx * 4 + i;
+            out[element_idx] = a[element_idx] + b[element_idx];
+        }
+    }
 }
 
 template <typename T>
@@ -1205,11 +1216,20 @@ void cuda_add(void* out, const void* a, const void* b, int row, int col)
 {
     const int total_size = row * col;
     const int block_size = 256;
-    // Each thread handles 4 elements when using float4
-    const int grid_size = CEIL_DIV(total_size, block_size * 4);
 
-    assert(col % 4 == 0);
-    add_kernel<<<grid_size, block_size, 0, main_stream>>>((float*)out, (const float*)a, (const float*)b, row, col);
+    if (col % 4 != 0) {
+        panic("Column size must be a multiple of 4 for cuda_add");
+    }
+
+    // Each thread handles 4 elements when using vectorized operations
+    const int grid_size = CEIL_DIV(total_size / 4, block_size);
+
+    add_kernel<float><<<grid_size, block_size, 0, main_stream>>>(
+        static_cast<float*>(out),
+        static_cast<const float*>(a),
+        static_cast<const float*>(b),
+        row, col);
+
     cuda_check(cudaGetLastError());
 }
 
