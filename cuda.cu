@@ -558,7 +558,7 @@ __global__ void argmax_kernel(int *out, const T *inp, int row, int col)
 }
 
 template <typename T>
-__global__ void rmsnorm_kernel(T* __restrict__ out, const float* __restrict__ inp,
+__global__ void rmsnorm_kernel(T* __restrict__ out, const T* __restrict__ inp,
                               const float* __restrict__ weight, int N, int C, float eps)
 {
     namespace cg = cooperative_groups;
@@ -573,14 +573,19 @@ __global__ void rmsnorm_kernel(T* __restrict__ out, const float* __restrict__ in
     int idx = blockIdx.x; // One block per row
 
     // Point to current sequence position
-    const float* x = inp + idx * C;
+    const T* x = inp + idx * C;
 
     // Thread coarsening through the row
     float thread_sum2 = 0.0f;
 
     // Each thread accumulates multiple elements
     for (int i = threadIdx.x; i < C; i += blockDim.x) {
-        float xi = x[i];
+        float xi;
+        if constexpr (std::is_same<T, float>::value) {
+            xi = __ldcs(x + i);
+        } else if constexpr (std::is_same<T, nv_bfloat16>::value) {
+            xi = bf16_to_f32(__ldcs(x + i));
+        }
         thread_sum2 += xi * xi;
     }
 
@@ -605,18 +610,23 @@ __global__ void rmsnorm_kernel(T* __restrict__ out, const float* __restrict__ in
     // Apply normalization and scaling
     T* o = out + idx * C;
     for (int i = threadIdx.x; i < C; i += blockDim.x) {
-        float val = __ldcs(x + i);
+        float val;
+        if constexpr (std::is_same<T, float>::value) {
+            val = __ldcs(x + i);
+        } else if constexpr (std::is_same<T, nv_bfloat16>::value) {
+            val = bf16_to_f32(__ldcs(x + i));
+        }
         float normalized = val * s * weight[i]; // x / sqrt(mean(x**2) + eps) * weight
         if constexpr (std::is_same<T, float>::value) {
             __stcs(o + i, normalized);
-        } else {
+        } else if constexpr (std::is_same<T, nv_bfloat16>::value) {
             __stcs(o + i, f32_to_bf16(normalized));
         }
     }
 }
 
 template <typename T>
-void cuda_rmsnorm(T *out, const float *inp, const float *weight, int row, int col, float eps)
+void cuda_rmsnorm(T *out, const T *inp, const float *weight, int row, int col, float eps)
 {
     const int block_size = 256;
     rmsnorm_kernel<T><<<row, block_size, 0, main_stream>>>(out, inp, weight, row, col, eps);
@@ -785,7 +795,7 @@ __global__ void scaled_softmax_kernel(T* out, const T* inp, int B, int NH, int T
 }
 
 template<typename T>
-void cuda_mh_sdpa_impl(T *out, const T *inp, int batch, int row, int NH, int HS)
+void cuda_mh_sdpa(T *out, const T *inp, int batch, int row, int NH, int HS)
 {
     T *qkv, *att, *vatt;
 
@@ -823,7 +833,7 @@ void cuda_mh_sdpa_impl(T *out, const T *inp, int batch, int row, int NH, int HS)
         data_type = CUDA_R_16BF;
         compute_type = CUBLAS_COMPUTE_32F;
     } else {
-        panic("Unsupported type for cuda_mh_sdpa_impl");
+        panic("Unsupported type for cuda_mh_sdpa");
     }
 
     // Batched matrix multiplication: Q @ K^T
@@ -868,14 +878,147 @@ void cuda_mh_sdpa_impl(T *out, const T *inp, int batch, int row, int NH, int HS)
     cuda_free(att);
 }
 
-void cuda_mh_sdpa_f32(void *out, const void *inp, int batch, int row, int NH, int HS)
+template <typename T>
+void cuda_rope_qkv(T *out, const T *inp, const float *freqs, int batch, int row, int NH, int kvNH, int HS)
 {
-    cuda_mh_sdpa_impl<float>((float*)out, (const float*)inp, batch, row, NH, HS);
+    int block_size = 256;
+    // We only need threads for Q and K sections, V will be untouched
+    int total_threads = batch * row * (NH + kvNH) * HS / 2;
+    int num_blocks = CEIL_DIV(total_threads, block_size);
+
+    rope_qkv_kernel<T><<<num_blocks, block_size, 0, main_stream>>>(out, inp, freqs, batch, row, NH, kvNH, HS);
+    cuda_check(cudaGetLastError());
 }
 
-void cuda_mh_sdpa_bf16(void *out, const void *inp, int batch, int row, int NH, int HS)
+template <typename T>
+void cuda_add(T *out, const T *a, const T *b, int row, int col)
 {
-    cuda_mh_sdpa_impl<nv_bfloat16>((nv_bfloat16*)out, (const nv_bfloat16*)inp, batch, row, NH, HS);
+    const int total_size = row * col;
+    const int block_size = 256;
+
+    if (col % 4 != 0) {
+        panic("Column size must be a multiple of 4 for cuda_add");
+    }
+
+    // Each thread handles 4 elements when using vectorized operations
+    const int grid_size = CEIL_DIV(total_size / 4, block_size);
+
+    add_kernel<T><<<grid_size, block_size, 0, main_stream>>>(
+        out,
+        a,
+        b,
+        row, col);
+
+    cuda_check(cudaGetLastError());
+}
+
+template <typename T>
+void cuda_repeat_qkv(T *out, const T *inp, int batch, int row, int qNH, int kvNH, int HS)
+{
+    const int block_size = 256;
+    int total_threads = batch * row * (3 * qNH) * HS; // one thread per output element
+    int num_blocks = CEIL_DIV(total_threads, block_size);
+    int replicate_factor = qNH / kvNH;
+    assert(replicate_factor > 1);
+    repeat_qkv_kernel<T><<<num_blocks, block_size, 0, main_stream>>>(out, inp, batch, row, qNH, HS, replicate_factor);
+    cuda_check(cudaGetLastError());
+}
+
+template <typename T>
+void group_query_attention(T *out, const T *embeds, const void *freqs, const void *norm_weight, const T *qkv_weight,
+                            const T *out_weight, int batch, int row, int NH, int kvNH, int HS, float eps, int dtype)
+{
+    T *qkv, *att, *output, *r_qkv;
+    int col = NH * HS;
+    int qkv_weight_row = (NH + 2 * kvNH) * HS;
+    att = (T *)cuda_malloc(batch * row * col * sizeof(T));
+    output = (T *)cuda_malloc(batch * row * col * sizeof(T));
+    qkv = (T *)cuda_malloc(batch * row * qkv_weight_row * sizeof(T));
+    r_qkv = (T *)cuda_malloc(batch * row * 3 * NH * HS * sizeof(T));
+
+    cuda_rmsnorm<T>(att, embeds, (const float *)norm_weight, batch * row, col, eps);
+    cuda_matmul(qkv, att, qkv_weight, nullptr, batch * row, col, qkv_weight_row, dtype); // (batch * row, col) @ (qkv_weight_row, col)^T
+    cuda_rope_qkv<T>(qkv, qkv, (const float *)freqs, batch, row, NH, kvNH, HS); // rope qkv in-place
+    cuda_repeat_qkv<T>(r_qkv, qkv, batch, row, NH, kvNH, HS);
+    cuda_mh_sdpa<T>(att, r_qkv, batch, row, NH, HS);
+    cuda_matmul(output, att, out_weight, nullptr, batch * row, col, col, dtype); // (batch * row, col) @ (col, col)^T
+    cuda_add<T>(out, embeds, output, batch * row, col); // residual connect embeddings to attention
+
+    cuda_free(qkv);
+    cuda_free(att);
+    cuda_free(output);
+    cuda_free(r_qkv);
+}
+
+template <typename T>
+void cuda_swiglu(T *out, const T *inp, int batch, int row, int col)
+{
+    int block_size = 256;
+    int grid_size = CEIL_DIV(batch * row * col, block_size);
+    swiglu_kernel<T><<<grid_size, block_size, 0, main_stream>>>((T *)out, (const T *)inp, batch, row, col);
+    cuda_check(cudaGetLastError());
+}
+
+template<typename T>
+void feed_forward(T *out, const T *attn, const float *norm_weight, const T *fc_weight, const T *out_weight,
+                    int batch, int row, int col, int ffl, float eps, int dtype)
+{
+    T *ffn, *fc;
+
+    ffn = (T *)cuda_malloc(batch * row * col * sizeof(T));
+    fc = (T *)cuda_malloc(batch * row * 2 * ffl * sizeof(T));
+
+    cuda_rmsnorm<T>(ffn, attn, norm_weight, batch * row, col, eps);
+    cuda_matmul(fc, ffn, fc_weight, nullptr, batch * row, col, 2 * ffl, dtype); // (batch * row, col) @ (2 * ffl, col)^T
+    cuda_swiglu<T>(fc, fc, batch, row, ffl); // update fc in-place
+    cuda_matmul(ffn, fc, out_weight, nullptr, batch * row, ffl, col, dtype); // (batch * row, ffl) @ (col, ffl)^T
+    cuda_add<T>(out, attn, ffn, batch * row, col); // residual connect attention to feedforward
+
+    cuda_free(fc);
+    cuda_free(ffn);
+}
+
+template <typename T>
+void cuda_get_row(T *out, const T *inp, int batch, int row, int col, int idx)
+{
+    const int block_size = 8;
+    const int total_threads = batch;
+    const int grid_size = CEIL_DIV(total_threads, block_size);
+
+    if (idx < 0)
+        idx += row;
+    assert(idx >= 0 && idx < row);
+    get_row_kernel<T><<<grid_size, block_size, 0, main_stream>>>(out, inp, batch, row, col, idx);
+    cuda_check(cudaGetLastError());
+}
+
+template <typename T>
+void cuda_argmax(int *out, const T *inp, int row, int col)
+{
+    const int block_size = 256;
+    const int grid_size = row;
+    argmax_kernel<T><<<grid_size, block_size, 0, main_stream>>>(out, inp, row, col);
+    cuda_check(cudaGetLastError());
+}
+
+template <typename T>
+void classify(T *out, T *ff, const float *norm_weight, const T *out_weight, int batch, int row, int col, int wsize, float eps, int dtype)
+{
+    T *ffn = (T *)ff + batch * col; // reuse the memory of ff
+
+    assert(batch * 2 <= row);
+    cuda_get_row<T>(ff, ff, batch, row, col, -1); // out shape: (batch, col)
+    cuda_rmsnorm<T>(ffn, ff, (const float *)norm_weight, batch, col, eps);
+    cuda_matmul(out, ffn, out_weight, nullptr, batch, col, wsize, dtype); // (batch, col) @ (wsize, col)^T
+}
+
+template <typename T>
+void predict(T *out, T *ff, const float *norm_weight, const T *out_weight, int batch, int row, int col, int wsize, float eps, int dtype)
+{
+    T *logits = (T *)cuda_malloc(batch * wsize * sizeof(T));
+    classify<T>(logits, ff, norm_weight, out_weight, batch, row, col, wsize, eps, dtype);
+    cuda_argmax<T>((int *)out, logits, batch, wsize); // TODO: support temp, top_k and top_p
+    cuda_free(logits);
 }
 
 extern "C" {
@@ -1021,20 +1164,12 @@ void cuda_rmsnorm_f32(void *out, const void *inp, const void *weight, int row, i
     cuda_rmsnorm<float>((float *)out, (const float *)inp, (const float *)weight, row, col, eps);
 }
 
-void cuda_rmsnorm_bf16(void *out, const void *inp, const void *weight, int row, int col, float eps)
-{
-    cuda_rmsnorm<nv_bfloat16>((nv_bfloat16 *)out, (const float *)inp, (const float *)weight, row, col, eps);
-}
-
 // swiglu: y = swish(fc2(x)) * fc1(x), where swish(x) = x / (1 + exp(-x)), fc1 and fc2 are fully connected layers
 // @param out: output matrix(batch, row, col)
 // @param inp: input matrix(batch, row, 2*col), concatenated fc1 and fc2 outputs along the last dimension
 void cuda_swiglu(void *out, const void *inp, int batch, int row, int col)
 {
-    int block_size = 256;
-    int grid_size = CEIL_DIV(batch * row * col, block_size);
-    swiglu_kernel<float><<<grid_size, block_size, 0, main_stream>>>((float *)out, (const float *)inp, batch, row, col);
-    cuda_check(cudaGetLastError());
+    cuda_swiglu<float>((float *)out, (const float *)inp, batch, row, col);
 }
 
 // Add a new function for bf16 swiglu
@@ -1061,7 +1196,7 @@ void cuda_swiglu_bf16(void *out, const void *inp, int batch, int row, int col)
  */
 void cuda_mh_sdpa(void *out, const void *inp, int batch, int row, int NH, int HS)
 {
-    cuda_mh_sdpa_f32(out, inp, batch, row, NH, HS);
+    cuda_mh_sdpa<float>((float*)out, (const float*)inp, batch, row, NH, HS);
 }
 
 /*
@@ -1096,14 +1231,7 @@ void cuda_mq_sdpa(void *out, const void *inp, int batch, int row, int qNH, int H
  */
 void cuda_rope_qkv(void *out, const void *inp, const void *freqs, int batch, int row, int NH, int kvNH, int HS)
 {
-    int block_size = 256;
-    // We only need threads for Q and K sections, V will be untouched
-    int total_threads = batch * row * (NH + kvNH) * HS / 2;
-    int num_blocks = CEIL_DIV(total_threads, block_size);
-
-    rope_qkv_kernel<float><<<num_blocks, block_size, 0, main_stream>>>((float *)out, (const float *)inp, (const float *)freqs,
-                                               batch, row, NH, kvNH, HS);
-    cuda_check(cudaGetLastError());
+    cuda_rope_qkv<float>((float *)out, (const float *)inp, (const float *)freqs, batch, row, NH, kvNH, HS);
 }
 
 /*
@@ -1242,45 +1370,20 @@ void cuda_dequantize(void *out, const void *inp, int row, int col, int type)
  */
 void cuda_add(void* out, const void* a, const void* b, int row, int col)
 {
-    const int total_size = row * col;
-    const int block_size = 256;
-
-    if (col % 4 != 0) {
-        panic("Column size must be a multiple of 4 for cuda_add");
-    }
-
-    // Each thread handles 4 elements when using vectorized operations
-    const int grid_size = CEIL_DIV(total_size / 4, block_size);
-
-    add_kernel<float><<<grid_size, block_size, 0, main_stream>>>(
-        static_cast<float*>(out),
-        static_cast<const float*>(a),
-        static_cast<const float*>(b),
-        row, col);
-
-    cuda_check(cudaGetLastError());
+    cuda_add<float>((float *)out, (const float *)a, (const float *)b, row, col);
 }
 
 void cuda_group_query_attention(void *out, const void *embeds, const void *freqs, const void *norm_weight, const void *qkv_weight,
                                 const void *out_weight, int batch, int row, int NH, int kvNH, int HS, float eps, int dtype)
 {
-    void *qkv, *att, *output;
-    int col = NH * HS;
-    int qkv_weight_row = (NH + 2 * kvNH) * HS;
-    att = cuda_malloc(batch * row * col * sizeof(float));
-    output = cuda_malloc(batch * row * col * sizeof(float));
-    qkv = cuda_malloc(batch * row * qkv_weight_row * sizeof(float));
-
-    cuda_rmsnorm_f32(att, embeds, norm_weight, batch * row, col, eps);
-    cuda_matmul(qkv, att, qkv_weight, nullptr, batch * row, col, qkv_weight_row, dtype); // (batch * row, col) @ (qkv_weight_row, col)^T
-    cuda_rope_qkv(qkv, qkv, freqs, batch, row, NH, kvNH, HS); // rope qkv in-place
-    cuda_gq_sdpa(att, qkv, batch, row, NH, kvNH, HS);
-    cuda_matmul(output, att, out_weight, nullptr, batch * row, col, col, dtype); // (batch * row, col) @ (col, col)^T
-    cuda_add(out, embeds, output, batch * row, col); // residual connect embeddings to attention
-
-    cuda_free(qkv);
-    cuda_free(att);
-    cuda_free(output);
+    if (dtype == GGML_TYPE_BF16) {
+        group_query_attention<nv_bfloat16>((nv_bfloat16 *)out, (const nv_bfloat16 *)embeds, (const float *)freqs,
+                                           (const float *)norm_weight, (const nv_bfloat16 *)qkv_weight,
+                                           (const nv_bfloat16 *)out_weight, batch, row, NH, kvNH, HS, eps, dtype);
+    } else {
+        group_query_attention<float>((float *)out, (const float *)embeds, (const float *)freqs, (const float *)norm_weight,
+                                     (const float *)qkv_weight, (const float *)out_weight, batch, row, NH, kvNH, HS, eps, dtype);
+    }
 }
 
 /*
@@ -1296,12 +1399,7 @@ void cuda_group_query_attention(void *out, const void *embeds, const void *freqs
  */
 void cuda_repeat_qkv(void *out, const void *inp, int batch, int row, int qNH, int kvNH, int HS)
 {
-    const int block_size = 256;
-    int total_threads = batch * row * (3 * qNH) * HS; // one thread per output element
-    int num_blocks = CEIL_DIV(total_threads, block_size);
-    int replicate_factor = qNH / kvNH;
-    assert(replicate_factor > 1);
-    repeat_qkv_kernel<float><<<num_blocks, block_size, 0, main_stream>>>((float *)out, (const float *)inp, batch, row, qNH, HS, replicate_factor);
+    cuda_repeat_qkv<float>((float *)out, (const float *)inp, batch, row, qNH, kvNH, HS);
 }
 
 /*
@@ -1316,15 +1414,7 @@ void cuda_repeat_qkv(void *out, const void *inp, int batch, int row, int qNH, in
  */
 void cuda_get_row(void *out, const void *inp, int batch, int row, int col, int idx)
 {
-    int block_size = 8;
-    int total_threads = batch;
-    int grid_size = CEIL_DIV(total_threads, block_size);
-
-    if (idx < 0)
-        idx += row;
-    assert(idx >= 0 && idx < row);
-    get_row_kernel<float><<<grid_size, block_size, 0, main_stream>>>((float *)out, (const float *)inp, batch, row, col, idx);
-    cuda_check(cudaGetLastError());
+    cuda_get_row<float>((float *)out, (const float *)inp, batch, row, col, idx);
 }
 
 /*
@@ -1337,44 +1427,43 @@ void cuda_get_row(void *out, const void *inp, int batch, int row, int col, int i
  */
 void cuda_argmax(void *out, const void *inp, int row, int col)
 {
-    const int block_size = 256;
-    const int grid_size = row;
-    argmax_kernel<float><<<grid_size, block_size, 0, main_stream>>>((int *)out, (const float *)inp, row, col);
-    cuda_check(cudaGetLastError());
+    cuda_argmax<float>((int *)out, (const float *)inp, row, col);
 }
 
 void cuda_feed_forward(void *out, const void *attn, const void *norm_weight, const void *fc_weight, const void *out_weight,
                     int batch, int row, int col, int ffl, float eps, int dtype)
 {
-    void *ffn = cuda_malloc(batch * row * col * sizeof(float));
-    void *fc = cuda_malloc(batch * row * 2 * ffl * sizeof(float));
-
-    cuda_rmsnorm_f32(ffn, attn, norm_weight, batch * row, col, eps);
-    cuda_matmul(fc, ffn, fc_weight, nullptr, batch * row, col, 2 * ffl, dtype); // (batch * row, col) @ (2 * ffl, col)^T
-    cuda_swiglu(fc, fc, batch, row, ffl); // update fc in-place
-    cuda_matmul(ffn, fc, out_weight, nullptr, batch * row, ffl, col, dtype); // (batch * row, ffl) @ (col, ffl)^T
-    cuda_add(out, attn, ffn, batch * row, col); // residual connect attention to feedforward
-
-    cuda_free(fc);
-    cuda_free(ffn);
+    if (dtype == GGML_TYPE_BF16) {
+        feed_forward<nv_bfloat16>((nv_bfloat16 *)out, (const nv_bfloat16 *)attn, (const float *)norm_weight,
+                                  (const nv_bfloat16 *)fc_weight, (const nv_bfloat16 *)out_weight,
+                                  batch, row, col, ffl, eps, dtype);
+    } else {
+        feed_forward<float>((float *)out, (const float *)attn, (const float *)norm_weight,
+                            (const float *)fc_weight, (const float *)out_weight,
+                            batch, row, col, ffl, eps, dtype);
+    }
 }
 
 void cuda_classify(void *out, void *ff, const void *norm_weight, const void *out_weight, int batch, int row, int col, int wsize, float eps, int dtype)
 {
-    void *ffn = (float *)ff + batch * col; // reuse the memory of ff
-
-    assert(batch * 2 <= row);
-    cuda_get_row(ff, ff, batch, row, col, -1); // out shape: (batch, col)
-    cuda_rmsnorm_f32(ffn, ff, norm_weight, batch, col, eps);
-    cuda_matmul(out, ffn, out_weight, nullptr, batch, col, wsize, dtype); // (batch, col) @ (wsize, col)^T
+    if (dtype == GGML_TYPE_BF16) {
+        classify<nv_bfloat16>((nv_bfloat16 *)out, (nv_bfloat16 *)ff, (const float *)norm_weight, (const nv_bfloat16 *)out_weight,
+                              batch, row, col, wsize, eps, dtype);
+    } else {
+        classify<float>((float *)out, (float *)ff, (const float *)norm_weight, (const float *)out_weight,
+                        batch, row, col, wsize, eps, dtype);
+    }
 }
 
 void cuda_predict(void *out, void *ff, const void *norm_weight, const void *out_weight, int batch, int row, int col, int wsize, float eps, int dtype)
 {
-    void *logits = cuda_malloc(batch * wsize * sizeof(float));
-    cuda_classify(logits, ff, norm_weight, out_weight, batch, row, col, wsize, eps, dtype);
-    cuda_argmax(out, logits, batch, wsize); // TODO: support temp, top_k and top_p
-    cuda_free(logits);
+    if (dtype == GGML_TYPE_BF16) {
+        predict<nv_bfloat16>((nv_bfloat16 *)out, (nv_bfloat16 *)ff, (const float *)norm_weight, (const nv_bfloat16 *)out_weight,
+                             batch, row, col, wsize, eps, dtype);
+    } else {
+        predict<float>((float *)out, (float *)ff, (const float *)norm_weight, (const float *)out_weight,
+                       batch, row, col, wsize, eps, dtype);
+    }
 }
 
 } // extern "C"
