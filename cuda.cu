@@ -460,20 +460,15 @@ __global__ void dequantize_Q8_0(float *out, const block_q8_0 *inp, int row, int 
 template <typename T>
 __global__ void add_kernel(T* out, const T* a, const T* b, int row, int col)
 {
-    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    int idx = (blockIdx.x * blockDim.x + threadIdx.x) * Packed128<T>::size;
     int size = row * col;
 
     if (idx >= size)
         return;
-
-    for (int i = 0; i < 4; i++) {
-        int element_idx = idx * 4 + i;
-        if (element_idx < row * col) {
-            float val_a = type_to_float<T>(a[element_idx]);
-            float val_b = type_to_float<T>(b[element_idx]);
-            out[element_idx] = float_to_type<T>(val_a + val_b);
-        }
-    }
+    Packed128<T> packed_a = load128cs(a + idx);
+    Packed128<T> packed_b = load128cs(b + idx);
+    Packed128<T> packed_out = packed_a + packed_b;
+    store128(out + idx, packed_out);
 }
 
 template <typename T>
@@ -873,12 +868,14 @@ void cuda_add(T *out, const T *a, const T *b, int row, int col)
     const int total_size = row * col;
     const int block_size = 256;
 
-    if (col % 4 != 0) {
-        panic("Column size must be a multiple of 4 for cuda_add");
+    int size = Packed128<T>::size;
+
+    if (col % size != 0) {
+        panic("Column size must be a multiple of %d for cuda_add", size);
     }
 
     // Each thread handles 4 elements when using vectorized operations
-    const int grid_size = CEIL_DIV(total_size / 4, block_size);
+    const int grid_size = CEIL_DIV(total_size / size, block_size);
 
     add_kernel<T><<<grid_size, block_size, 0, main_stream>>>(
         out,
