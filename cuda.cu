@@ -190,6 +190,13 @@ __global__ void swiglu_kernel(T* out, const T* inp, int B, int TT, int C)
             float result = swish_val * x1;
 
             out[idx] = f32_to_bf16(result);
+        } else if constexpr (std::is_same<T, half>::value) {
+            float x2 = f16_to_f32(inp[fc2_idx]);
+            float x1 = f16_to_f32(inp[fc1_idx]);
+
+            float swish_val = x2 / (1.0f + expf(-x2));
+            float result = swish_val * x1;
+            out[idx] = f32_to_f16(result);
         }
     }
 }
@@ -233,6 +240,14 @@ __global__ void rope_qkv_kernel(T *out, const T *inp, const float *freqs,
 	    float result_imag = x_real * s + x_imag * c;
 	    out[base] = f32_to_bf16(result_real);
 	    out[base + 1] = f32_to_bf16(result_imag);
+    } else if constexpr (std::is_same<T, half>::value) {
+        float x_real = f16_to_f32(inp[base]);
+        float x_imag = f16_to_f32(inp[base + 1]);
+
+        float result_real = x_real * c - x_imag * s;
+        float result_imag = x_real * s + x_imag * c;
+        out[base] = f32_to_f16(result_real);
+        out[base + 1] = f32_to_f16(result_imag);
     } else {
         panic("Unsupported type for rope_qkv_kernel");
     }
@@ -324,6 +339,9 @@ void cuda_matmul_cublaslt(T *out, const T *inp, const T *weight, const T *bias,
         compute_type = CUBLAS_COMPUTE_32F;
         // Forces any reductions during matrix multiplications to use the compute type and not the output type
         cublasSetMathMode(cublas_handle, (cublasMath_t)(CUBLAS_DEFAULT_MATH | CUBLAS_MATH_DISALLOW_REDUCED_PRECISION_REDUCTION));
+    } else if constexpr (std::is_same<T, half>::value) {
+        data_type = CUDA_R_16F;
+        compute_type = CUBLAS_COMPUTE_32F;
     } else {
         panic("Unsupported type for cuda_matmul_cublaslt");
     }
@@ -393,6 +411,18 @@ void cuda_matmul_cublaslt_bf16(void *out, const void *inp, const void *weight, c
     );
 }
 
+void cuda_matmul_cublaslt_f16(void *out, const void *inp, const void *weight, const void *bias,
+                        int row, int column, int oc)
+{
+    cuda_matmul_cublaslt<half>(
+        static_cast<half*>(out),
+        static_cast<const half*>(inp),
+        static_cast<const half*>(weight),
+        static_cast<const half*>(bias),
+        row, column, oc
+    );
+}
+
 __global__ void div_kernel(float *out, const float *a, const float *b, int row, int col)
 {
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
@@ -436,26 +466,12 @@ __global__ void add_kernel(T* out, const T* a, const T* b, int row, int col)
     if (idx >= size)
         return;
 
-    if constexpr (std::is_same<T, float>::value) {
-        // Vectorized version for float - process 4 elements at once
-        float4 *out4 = (float4 *)out;
-        const float4 *a4 = (const float4 *)a;
-        const float4 *b4 = (const float4 *)b;
-
-        float4 va = a4[idx];
-        float4 vb = b4[idx];
-        float4 vout;
-        vout.x = va.x + vb.x;
-        vout.y = va.y + vb.y;
-        vout.z = va.z + vb.z;
-        vout.w = va.w + vb.w;
-        out4[idx] = vout;
-    } else if constexpr (std::is_same<T, nv_bfloat16>::value) {
-        // Element-wise version for bfloat16
-        #pragma unroll
-        for (int i = 0; i < 4; i++) {
-            int element_idx = idx * 4 + i;
-            out[element_idx] = a[element_idx] + b[element_idx];
+    for (int i = 0; i < 4; i++) {
+        int element_idx = idx * 4 + i;
+        if (element_idx < row * col) {
+            float val_a = type_to_float<T>(a[element_idx]);
+            float val_b = type_to_float<T>(b[element_idx]);
+            out[element_idx] = float_to_type<T>(val_a + val_b);
         }
     }
 }
@@ -521,13 +537,7 @@ __global__ void argmax_kernel(int *out, const T *inp, int row, int col)
     int max_idx = -1;
 
     for (int i = tid; i < col; i += blockDim.x) {
-        float val;
-        if constexpr (std::is_same<T, float>::value) {
-            val = inp[r * col + i];
-        } else if constexpr (std::is_same<T, nv_bfloat16>::value) {
-            val = bf16_to_f32(inp[r * col + i]);
-        }
-
+        float val = type_to_float<T>(inp[r * col + i]);
         if (val > max_val) {
             max_val = val;
             max_idx = i;
@@ -580,12 +590,7 @@ __global__ void rmsnorm_kernel(T* __restrict__ out, const T* __restrict__ inp,
 
     // Each thread accumulates multiple elements
     for (int i = threadIdx.x; i < C; i += blockDim.x) {
-        float xi;
-        if constexpr (std::is_same<T, float>::value) {
-            xi = __ldcs(x + i);
-        } else if constexpr (std::is_same<T, nv_bfloat16>::value) {
-            xi = bf16_to_f32(__ldcs(x + i));
-        }
+        float xi = type_to_float<T>(__ldcs(x + i));
         thread_sum2 += xi * xi;
     }
 
@@ -610,18 +615,9 @@ __global__ void rmsnorm_kernel(T* __restrict__ out, const T* __restrict__ inp,
     // Apply normalization and scaling
     T* o = out + idx * C;
     for (int i = threadIdx.x; i < C; i += blockDim.x) {
-        float val;
-        if constexpr (std::is_same<T, float>::value) {
-            val = __ldcs(x + i);
-        } else if constexpr (std::is_same<T, nv_bfloat16>::value) {
-            val = bf16_to_f32(__ldcs(x + i));
-        }
+        float val = type_to_float<T>(__ldcs(x + i));
         float normalized = val * s * weight[i]; // x / sqrt(mean(x**2) + eps) * weight
-        if constexpr (std::is_same<T, float>::value) {
-            __stcs(o + i, normalized);
-        } else if constexpr (std::is_same<T, nv_bfloat16>::value) {
-            __stcs(o + i, f32_to_bf16(normalized));
-        }
+        __stcs(o + i, float_to_type<T>(normalized));
     }
 }
 
@@ -703,12 +699,7 @@ __global__ void scaled_softmax_kernel(T* out, const T* inp, int B, int NH, int T
     // Step 1: Find maximum while applying scale and causal mask
     float maxval = -INFINITY;
     for (int i = tid; i < TT; i += blockDim.x) {
-        float val;
-        if constexpr (std::is_same<T, float>::value) {
-            val = (i <= row_idx) ? x[i] * scale : -INFINITY;
-        } else if constexpr (std::is_same<T, nv_bfloat16>::value) {
-            val = (i <= row_idx) ? bf16_to_f32(x[i]) * scale : -INFINITY;
-        }
+        float val = (i <= row_idx) ? type_to_float<T>(x[i]) * scale : -INFINITY;
         maxval = fmaxf(maxval, val);
     }
 
@@ -737,20 +728,12 @@ __global__ void scaled_softmax_kernel(T* out, const T* inp, int B, int NH, int T
     for (int i = tid; i < TT; i += blockDim.x) {
         float val;
         if (i <= row_idx) {
-            if constexpr (std::is_same<T, float>::value) {
-                val = expf(x[i] * scale - offset);
-            } else if constexpr (std::is_same<T, nv_bfloat16>::value) {
-                val = expf(bf16_to_f32(x[i]) * scale - offset);
-            }
+            val = expf(type_to_float<T>(x[i]) * scale - offset);
         } else {
             val = 0.0f;
         }
 
-        if constexpr (std::is_same<T, float>::value) {
-            out[row_start + i] = val;  // store intermediate result
-        } else if constexpr (std::is_same<T, nv_bfloat16>::value) {
-            out[row_start + i] = f32_to_bf16(val);  // store intermediate result
-        }
+        out[row_start + i] = float_to_type<T>(val);  // store intermediate result
         sumval += val;
     }
 
@@ -772,24 +755,15 @@ __global__ void scaled_softmax_kernel(T* out, const T* inp, int B, int NH, int T
     __syncthreads();
 
     // Step 3: Normalize by sum
-    float sum = sumvals[0];
-    float inv_sum = 1.0f / sum;
+    float inv_sum = 1.0f / sumvals[0];
 
     // write final normalized values
     for (int i = tid; i < TT; i += blockDim.x) {
         if (i <= row_idx) {
-            if constexpr (std::is_same<T, float>::value) {
-                out[row_start + i] *= inv_sum;
-            } else if constexpr (std::is_same<T, nv_bfloat16>::value) {
-                nv_bfloat16 val = out[row_start + i] * f32_to_bf16(inv_sum);
-                out[row_start + i] = val;
-            }
+            float val = type_to_float<T>(out[row_start + i]) * inv_sum;
+            out[row_start + i] = float_to_type<T>(val);
         } else {
-            if constexpr (std::is_same<T, float>::value) {
-                out[row_start + i] = 0.0f;
-            } else if constexpr (std::is_same<T, nv_bfloat16>::value) {
-                out[row_start + i] = f32_to_bf16(0.0f);
-            }
+            out[row_start + i] = float_to_type<T>(0.0f);
         }
     }
 }
@@ -831,6 +805,9 @@ void cuda_mh_sdpa(T *out, const T *inp, int batch, int row, int NH, int HS)
         data_type = CUDA_R_32F;
     } else if constexpr (std::is_same<T, nv_bfloat16>::value) {
         data_type = CUDA_R_16BF;
+        compute_type = CUBLAS_COMPUTE_32F;
+    } else if constexpr (std::is_same<T, half>::value) {
+        data_type = CUDA_R_16F;
         compute_type = CUBLAS_COMPUTE_32F;
     } else {
         panic("Unsupported type for cuda_mh_sdpa");
@@ -1105,6 +1082,8 @@ void cuda_matmul(void *out, const void *inp, const void *weight, const void *bia
 {
     if (dtype == GGML_TYPE_BF16) {
         return cuda_matmul_cublaslt_bf16(out, inp, weight, bias, row, column, oc);
+    } else if (dtype == GGML_TYPE_F16) {
+        return cuda_matmul_cublaslt_f16(out, inp, weight, bias, row, column, oc);
     } else if (dtype == GGML_TYPE_F32) {
         return cuda_matmul_cublaslt_f32(out, inp, weight, bias, row, column, oc);
     } else {
@@ -1277,7 +1256,7 @@ void cuda_embedding(void* out, const void *inp, const void *embd, int batch, int
     const int N = batch * row;  // One thread per row
     const int grid_size = CEIL_DIV(N, block_size);
 
-    if (dtype == GGML_TYPE_F32 || dtype == GGML_TYPE_BF16) {
+    if (dtype == GGML_TYPE_F32 || dtype == GGML_TYPE_BF16 || dtype == GGML_TYPE_F16) {
         get_embeddings_kernel<<<grid_size, block_size, 0, main_stream>>>(out, (const int*)inp, embd, batch, row, bytes_per_row);
         cuda_check(cudaGetLastError());
         return;
@@ -1380,6 +1359,9 @@ void cuda_group_query_attention(void *out, const void *embeds, const void *freqs
         group_query_attention<nv_bfloat16>((nv_bfloat16 *)out, (const nv_bfloat16 *)embeds, (const float *)freqs,
                                            (const float *)norm_weight, (const nv_bfloat16 *)qkv_weight,
                                            (const nv_bfloat16 *)out_weight, batch, row, NH, kvNH, HS, eps, dtype);
+    } else if (dtype == GGML_TYPE_F16) {
+        group_query_attention<half>((half *)out, (const half *)embeds, (const float *)freqs, (const float *)norm_weight,
+                                    (const half *)qkv_weight, (const half *)out_weight, batch, row, NH, kvNH, HS, eps, dtype);
     } else {
         group_query_attention<float>((float *)out, (const float *)embeds, (const float *)freqs, (const float *)norm_weight,
                                      (const float *)qkv_weight, (const float *)out_weight, batch, row, NH, kvNH, HS, eps, dtype);
@@ -1437,6 +1419,10 @@ void cuda_feed_forward(void *out, const void *attn, const void *norm_weight, con
         feed_forward<nv_bfloat16>((nv_bfloat16 *)out, (const nv_bfloat16 *)attn, (const float *)norm_weight,
                                   (const nv_bfloat16 *)fc_weight, (const nv_bfloat16 *)out_weight,
                                   batch, row, col, ffl, eps, dtype);
+    } else if (dtype == GGML_TYPE_F16) {
+        feed_forward<half>((half *)out, (const half *)attn, (const float *)norm_weight,
+                           (const half *)fc_weight, (const half *)out_weight,
+                           batch, row, col, ffl, eps, dtype);
     } else {
         feed_forward<float>((float *)out, (const float *)attn, (const float *)norm_weight,
                             (const float *)fc_weight, (const float *)out_weight,
@@ -1449,6 +1435,9 @@ void cuda_classify(void *out, void *ff, const void *norm_weight, const void *out
     if (dtype == GGML_TYPE_BF16) {
         classify<nv_bfloat16>((nv_bfloat16 *)out, (nv_bfloat16 *)ff, (const float *)norm_weight, (const nv_bfloat16 *)out_weight,
                               batch, row, col, wsize, eps, dtype);
+    } else if (dtype == GGML_TYPE_F16) {
+        classify<half>((half *)out, (half *)ff, (const float *)norm_weight, (const half *)out_weight,
+                       batch, row, col, wsize, eps, dtype);
     } else {
         classify<float>((float *)out, (float *)ff, (const float *)norm_weight, (const float *)out_weight,
                         batch, row, col, wsize, eps, dtype);
@@ -1460,6 +1449,9 @@ void cuda_predict(void *out, void *ff, const void *norm_weight, const void *out_
     if (dtype == GGML_TYPE_BF16) {
         predict<nv_bfloat16>((nv_bfloat16 *)out, (nv_bfloat16 *)ff, (const float *)norm_weight, (const nv_bfloat16 *)out_weight,
                              batch, row, col, wsize, eps, dtype);
+    } else if (dtype == GGML_TYPE_F16) {
+        predict<half>((half *)out, (half *)ff, (const float *)norm_weight, (const half *)out_weight,
+                      batch, row, col, wsize, eps, dtype);
     } else {
         predict<float>((float *)out, (float *)ff, (const float *)norm_weight, (const float *)out_weight,
                        batch, row, col, wsize, eps, dtype);

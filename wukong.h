@@ -69,14 +69,6 @@ struct block_q8_0 {
 
 #define WARP_SIZE 32U
 
-static __device__ __forceinline__ nv_bfloat16 f32_to_bf16(float f) {
-    return __float2bfloat16(f);
-}
-
-static __device__ __forceinline__ float bf16_to_f32(nv_bfloat16 f) {
-    return __bfloat162float(f);
-}
-
 #define panic(fmt, ...) do { \
     fprintf(stderr, "%s:%d:%s(): " fmt "\n", __FILE__, __LINE__, __func__, ##__VA_ARGS__); \
     exit(EXIT_FAILURE); \
@@ -96,6 +88,52 @@ static __device__ __forceinline__ float bf16_to_f32(nv_bfloat16 f) {
 
 // convenience macro for calculating grid/block dimensions for kernels
 #define CEIL_DIV(M, N) (((M) + (N)-1) / (N))
+
+static __device__ __forceinline__ nv_bfloat16 f32_to_bf16(float f) {
+    return __float2bfloat16(f);
+}
+
+static __device__ __forceinline__ float bf16_to_f32(nv_bfloat16 f) {
+    return __bfloat162float(f);
+}
+
+static __device__ __forceinline__ half f32_to_f16(float f) {
+    return __float2half(f);
+}
+
+static __device__ __forceinline__ float f16_to_f32(half f) {
+    return __half2float(f);
+}
+
+template<typename T>
+__device__ __forceinline__ float type_to_float(T val) {
+    static_assert(std::is_same<T, float>::value ||
+                 std::is_same<T, nv_bfloat16>::value ||
+                 std::is_same<T, half>::value,
+                 "Unsupported type for conversion to float");
+    if constexpr (std::is_same<T, float>::value) {
+        return val;
+    } else if constexpr (std::is_same<T, nv_bfloat16>::value) {
+        return bf16_to_f32(val);
+    } else if constexpr (std::is_same<T, half>::value) {
+        return f16_to_f32(val);
+    }
+}
+
+template<typename T>
+__device__ __forceinline__ T float_to_type(float val) {
+    static_assert(std::is_same<T, float>::value ||
+                 std::is_same<T, nv_bfloat16>::value ||
+                 std::is_same<T, half>::value,
+                 "Unsupported type for conversion from float");
+    if constexpr (std::is_same<T, float>::value) {
+        return val;
+    } else if constexpr (std::is_same<T, nv_bfloat16>::value) {
+        return f32_to_bf16(val);
+    } else if constexpr (std::is_same<T, half>::value) {
+        return f32_to_f16(val);
+    }
+}
 
 static inline float* malloc_rand_float(size_t N)
 {
