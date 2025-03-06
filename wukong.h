@@ -8,6 +8,7 @@
 #include <cublas_v2.h>
 #include <float.h>
 #include <cuda_bf16.h>
+#include <cuda_fp16.h>
 #include <cooperative_groups.h>
 #include <cooperative_groups/reduce.h>
 

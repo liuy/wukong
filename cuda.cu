@@ -168,6 +168,21 @@ __global__ void add_bias_kernel(float* out, const float* bias, int T, int OC)
 }
 
 template <typename T>
+__device__ __forceinline__ T sigmoid(const T x)
+{
+    if constexpr (std::is_same<T, float>::value) {
+        return 1.0f / (1.0f + expf(-x));
+    } else if constexpr (std::is_same<T, half>::value) {
+        // return (T)(1.0f) / ((T)(1.0f) + hexp(-x)); // cuda 12.6 compiler complains and errors out. FIXME
+        return (T)((1.0f) / (1.0f + expf(f16_to_f32(-x)))); // just works around the issue with hexp(half)
+    } else if constexpr (std::is_same<T, nv_bfloat16>::value) {
+        return (T)(1.0f) / ((T)(1.0f) + hexp(-x));
+    } else {
+        panic("Unsupported type for sigmoid");
+    }
+}
+
+template <typename T>
 __global__ void swiglu_kernel(T* out, const T* inp, int B, int TT, int C)
 {
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
@@ -179,25 +194,10 @@ __global__ void swiglu_kernel(T* out, const T* inp, int B, int TT, int C)
         int fc1_idx = (b * TT * 2 * C) + (t * 2 * C) + c;
         int fc2_idx = fc1_idx + C;
 
-        if constexpr (std::is_same<T, float>::value) {
-            float swish_val = inp[fc2_idx] / (1.0f + expf(-inp[fc2_idx]));
-            out[idx] = swish_val * inp[fc1_idx];
-        } else if constexpr (std::is_same<T, nv_bfloat16>::value) {
-            float x2 = bf16_to_f32(inp[fc2_idx]);
-            float x1 = bf16_to_f32(inp[fc1_idx]);
-
-            float swish_val = x2 / (1.0f + expf(-x2));
-            float result = swish_val * x1;
-
-            out[idx] = f32_to_bf16(result);
-        } else if constexpr (std::is_same<T, half>::value) {
-            float x2 = f16_to_f32(inp[fc2_idx]);
-            float x1 = f16_to_f32(inp[fc1_idx]);
-
-            float swish_val = x2 / (1.0f + expf(-x2));
-            float result = swish_val * x1;
-            out[idx] = f32_to_f16(result);
-        }
+        T val1 = inp[fc1_idx];
+        T val2 = inp[fc2_idx];
+        T swish_val = val2 * sigmoid<T>(val2);
+        out[idx] = swish_val * val1;
     }
 }
 
