@@ -480,11 +480,16 @@ __global__ void argmax_kernel(int *out, const T *inp, int row, int col)
     float max_val = -INFINITY;
     int max_idx = -1;
 
-    for (int i = tid; i < col; i += blockDim.x) {
-        float val = type_to_float<T>(inp[r * col + i]);
-        if (val > max_val) {
-            max_val = val;
-            max_idx = i;
+    int size = Packed128<T>::size;
+    for (int i = tid; i < col / size; i += blockDim.x) {
+        Packed128<T> packed_vals = load128cs(&inp[r * col + i * size]);
+        #pragma unroll
+        for (int j = 0; j < size; j++) {
+            float val = type_to_float<T>(packed_vals[j]);
+            if (val > max_val) {
+                max_val = val;
+                max_idx = i * size + j;
+            }
         }
     }
 
@@ -939,6 +944,11 @@ void cuda_argmax(int *out, const T *inp, int row, int col)
 {
     const int block_size = 256;
     const int grid_size = row;
+
+    // Ensure column size is a multiple of Packed128<T>::size
+    int size = Packed128<T>::size;
+    assert(col % size == 0 && "Column size must be a multiple of Packed128<T>::size for cuda_argmax");
+
     argmax_kernel<T><<<grid_size, block_size, 0, main_stream>>>(out, inp, row, col);
     cuda_check(cudaGetLastError());
 }
