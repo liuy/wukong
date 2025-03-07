@@ -170,16 +170,7 @@ __global__ void add_bias_kernel(float* out, const float* bias, int T, int OC)
 template <typename T>
 __device__ __forceinline__ T sigmoid(const T x)
 {
-    if constexpr (std::is_same<T, float>::value) {
-        return 1.0f / (1.0f + expf(-x));
-    } else if constexpr (std::is_same<T, half>::value) {
-        // return (T)(1.0f) / ((T)(1.0f) + hexp(-x)); // cuda 12.6 compiler complains and errors out. FIXME
-        return (T)((1.0f) / (1.0f + expf(f16_to_f32(-x)))); // just works around the issue with hexp(half)
-    } else if constexpr (std::is_same<T, nv_bfloat16>::value) {
-        return (T)(1.0f) / ((T)(1.0f) + hexp(-x));
-    } else {
-        panic("Unsupported type for sigmoid");
-    }
+    return 1.0f / (1.0f + expf(type_to_float(-x)));
 }
 
 template <typename T>
