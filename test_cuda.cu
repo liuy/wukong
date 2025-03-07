@@ -219,7 +219,7 @@ TEST(Cuda, cuda_mq_sdpa)
     cuda_free(d_inp);
 }
 
-TEST(Cuda, cuda_rmsnorm_f32)
+TEST(Cuda, cuda_rmsnorm)
 {
     int batch = 2;
     int row = 2;
@@ -250,7 +250,7 @@ TEST(Cuda, cuda_rmsnorm_f32)
     cuda_to_device(d_inp, inp, batch * row * col * sizeof(float));
     cuda_to_device(d_weight, weight, col * sizeof(float));
 
-    cuda_rmsnorm_f32(d_out, d_inp, d_weight, batch * row, col, 1e-5);
+    cuda_rmsnorm(d_out, d_inp, d_weight, batch * row, col, 1e-5);
     cuda_to_host(out, d_out, batch * row * col * sizeof(float));
 
     assert_array_eq(res, out, batch * row * col);
@@ -259,39 +259,40 @@ TEST(Cuda, cuda_rmsnorm_f32)
     cuda_free(d_inp);
     cuda_free(d_weight);
 }
-
 TEST(Cuda, cuda_swiglu)
 {
     int batch = 2;
     int row = 2;
-    int col = 3;
+    int col = 4;
     int hidden_size = 4;
 
     float inp[batch * row * col] = {
-        0.1f, 0.2f, 0.3f,
-        0.4f, 0.5f, 0.6f,
-        0.1f, 0.2f, 0.3f,
-        0.4f, 0.5f, 0.6f
+        0.1f, 0.2f, 0.3f, 0.4f,
+        0.5f, 0.6f, 0.7f, 0.8f,
+        0.1f, 0.2f, 0.3f, 0.4f,
+        0.5f, 0.6f, 0.7f, 0.8f
     };
 
     // Expected output tensor
     float res[batch * row * hidden_size] = {
-        0.010485f, 0.059323f, 0.155615f, 0.306913f,
-        0.059323f, 0.405260f, 1.149139f, 2.347071f,
-        0.010485f, 0.059323f, 0.155615f, 0.306913f,
-        0.059323f, 0.405260f, 1.149139f, 2.347071f
+        // Batch 0
+        5.169983e-02, 3.274121e-01, 9.078148e-01, 1.839542e+00,
+        3.274121e-01, 2.575540e+00, 7.276948e+00, 1.427929e+01,
+        // Batch 1
+        5.169983e-02, 3.274121e-01, 9.078148e-01, 1.839542e+00,
+        3.274121e-01, 2.575540e+00, 7.276948e+00, 1.427929e+01
     };
 
     // concatenate the weights
     float weights_fc[2 * hidden_size * col] = {
-        0.1f, 0.2f, 0.3f,
-        0.4f, 0.5f, 0.6f,
-        0.7f, 0.8f, 0.9f,
-        1.0f, 1.1f, 1.2f,
-        0.1f, 0.2f, 0.3f,
-        0.4f, 0.5f, 0.6f,
-        0.7f, 0.8f, 0.9f,
-        1.0f, 1.1f, 1.2f
+        0.1f, 0.2f, 0.3f, 0.4f,
+        0.5f, 0.6f, 0.7f, 0.8f,
+        0.9f, 1.0f, 1.1f, 1.2f,
+        1.3f, 1.4f, 1.5f, 1.6f,
+        0.1f, 0.2f, 0.3f, 0.4f,
+        0.5f, 0.6f, 0.7f, 0.8f,
+        0.9f, 1.0f, 1.1f, 1.2f,
+        1.3f, 1.4f, 1.5f, 1.6f
     };
     void *d_out = cuda_malloc(batch * row * hidden_size * sizeof(float));
     void *d_inp = cuda_malloc(batch * row * col * sizeof(float));
@@ -804,7 +805,7 @@ TEST(Cuda, cuda_feed_forward)
     int batch = 2;
     int row = 2;
     int col = 4;
-    int ffl = 6;
+    int ffl = 8;
     float eps = 1e-5;
     int dtype = GGML_TYPE_F32;
 
@@ -827,23 +828,27 @@ TEST(Cuda, cuda_feed_forward)
         -0.02f, 0.02f, -0.03f, 0.03f,
         0.04f, -0.04f, 0.05f, -0.05f,
         -0.06f, 0.06f, -0.07f, 0.07f,
-        0.08f, -0.08f, 0.09f, -0.09f
+        0.08f, -0.08f, 0.09f, -0.09f,
+        -0.1f, 0.1f, -0.05f, 0.05f,
+        0.02f, -0.02f, 0.03f, -0.03f,
+        -0.04f, 0.04f, -0.06f, 0.06f,
+        0.07f, -0.07f, 0.08f, -0.08f
     };
 
     float norm_weight[col] = {0.5f, 0.6f, 0.7f, 0.8f};
 
     float out_weight[col * ffl] = {
-        0.1f, 0.2f, 0.3f, 0.4f, 0.5f, 0.6f,
-        0.7f, 0.8f, 0.9f, 1.0f, 1.1f, 1.2f,
-        0.1f, 0.2f, 0.3f, 0.4f, 0.5f, 0.6f,
-        0.7f, 0.8f, 0.9f, 1.0f, 1.1f, 1.2f,
+        0.1f, 0.2f, 0.3f, 0.4f, 0.5f, 0.6f, 0.7f, 0.8f,
+        0.9f, 0.1f, 0.2f, 0.3f, 0.4f, 0.5f, 0.6f, 0.7f,
+        0.8f, 0.9f, 0.1f, 0.2f, 0.3f, 0.4f, 0.5f, 0.6f,
+        0.7f, 0.8f, 0.9f, 0.1f, 0.2f, 0.3f, 0.4f, 0.5f
     };
 
     float expected[batch * row * col] = {
-        -4.791765e-01, 3.560444e-01, -6.791764e-01, 9.560443e-01,
-        8.174522e-01, -5.537222e-01, 4.174522e-01, -1.537222e-01,
-        -8.072154e-02, 5.519935e-01, -2.807215e-01, 7.519935e-01,
-        6.204888e-01, -3.465915e-01, 2.204888e-01, -7.465915e-01
+        -4.642652e-01, 3.333575e-01, -6.707020e-01, 9.334695e-01,
+        8.315643e-01, -5.707163e-01, 4.252757e-01, -1.750155e-01,
+        -6.674443e-02, 5.310827e-01, -2.727940e-01, 7.305864e-01,
+        6.346608e-01, -3.679304e-01, 2.281372e-01, -7.708573e-01
     };
 
     void *d_attn = cuda_malloc(batch * row * col * sizeof(float));

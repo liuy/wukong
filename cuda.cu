@@ -176,20 +176,32 @@ __device__ __forceinline__ T sigmoid(const T x)
 template <typename T>
 __global__ void swiglu_kernel(T* out, const T* inp, int B, int TT, int C)
 {
-    int idx = blockIdx.x * blockDim.x + threadIdx.x;
-    if (idx < B * TT * C) {
-        int b = idx / (TT * C);
-        int t = (idx / C) % TT;
-        int c = idx % C;
+    int idx = (blockIdx.x * blockDim.x + threadIdx.x) * Packed128<T>::size;
+    int total_elements = B * TT * C;
 
-        int fc1_idx = (b * TT * 2 * C) + (t * 2 * C) + c;
-        int fc2_idx = fc1_idx + C;
+    if (idx >= total_elements) return;
 
-        T val1 = inp[fc1_idx];
-        T val2 = inp[fc2_idx];
-        T swish_val = val2 * sigmoid<T>(val2);
-        out[idx] = swish_val * val1;
+    // Calculate batch, sequence position and channel indices
+    int b = idx / (TT * C);
+    int t = (idx / C) % TT;
+    int c_base = idx % C;
+
+    // Calculate base indices for fc1 and fc2 parts
+    int fc_idx_base = (b * TT * 2 * C) + (t * 2 * C) + c_base;
+
+    Packed128<T> packed_fc1 = load128cs(inp + fc_idx_base);
+    Packed128<T> packed_fc2 = load128cs(inp + fc_idx_base + C);
+    Packed128<T> packed_out;
+
+    #pragma unroll
+    for (int i = 0; i < Packed128<T>::size; i++) {
+        float val1 = type_to_float(packed_fc1[i]);
+        float val2 = type_to_float(packed_fc2[i]);
+        float swish_val = val2 * sigmoid(val2);
+        packed_out[i] = float_to_type<T>(swish_val * val1);
     }
+
+    store128(out + idx, packed_out);
 }
 
 template <typename T>
@@ -589,6 +601,20 @@ void cuda_rmsnorm(T *out, const T *inp, const float *weight, int row, int col, f
 }
 
 template<typename T>
+void cuda_swiglu(T *out, const T *inp, int batch, int row, int col)
+{
+    int block_size = 256;
+    int size = Packed128<T>::size;
+
+    assert(col % size == 0 && "Column size must be a multiple of Packed128<T>::size for cuda_swiglu");
+    // Each thread now processes Packed128<T>::size elements
+    int grid_size = CEIL_DIV(batch * row * col / size, block_size);
+
+    swiglu_kernel<T><<<grid_size, block_size, 0, main_stream>>>((T *)out, (const T *)inp, batch, row, col);
+    cuda_check(cudaGetLastError());
+}
+
+template<typename T>
 __global__ void permute_kernel(T* q, T* k, T* v,
                                const T* inp,
                                int B, int N, int NH, int d)
@@ -888,15 +914,6 @@ void group_query_attention(T *out, const T *embeds, const void *freqs, const voi
     cuda_free(r_qkv);
 }
 
-template <typename T>
-void cuda_swiglu(T *out, const T *inp, int batch, int row, int col)
-{
-    int block_size = 256;
-    int grid_size = CEIL_DIV(batch * row * col, block_size);
-    swiglu_kernel<T><<<grid_size, block_size, 0, main_stream>>>((T *)out, (const T *)inp, batch, row, col);
-    cuda_check(cudaGetLastError());
-}
-
 template<typename T>
 void feed_forward(T *out, const T *attn, const float *norm_weight, const T *fc_weight, const T *out_weight,
                     int batch, int row, int col, int ffl, float eps, int dtype)
@@ -1104,7 +1121,7 @@ void cuda_gq_sdpa(void *out, const void *inp, int batch, int row, int qNH, int k
  * @param col: column size
  * @param eps: epsilon value
  */
-void cuda_rmsnorm_f32(void *out, const void *inp, const void *weight, int row, int col, float eps)
+void cuda_rmsnorm(void *out, const void *inp, const void *weight, int row, int col, float eps)
 {
     cuda_rmsnorm<float>((float *)out, (const float *)inp, (const float *)weight, row, col, eps);
 }
@@ -1115,15 +1132,6 @@ void cuda_rmsnorm_f32(void *out, const void *inp, const void *weight, int row, i
 void cuda_swiglu(void *out, const void *inp, int batch, int row, int col)
 {
     cuda_swiglu<float>((float *)out, (const float *)inp, batch, row, col);
-}
-
-// Add a new function for bf16 swiglu
-void cuda_swiglu_bf16(void *out, const void *inp, int batch, int row, int col)
-{
-    int block_size = 256;
-    int grid_size = CEIL_DIV(batch * row * col, block_size);
-    swiglu_kernel<nv_bfloat16><<<grid_size, block_size, 0, main_stream>>>((nv_bfloat16 *)out, (const nv_bfloat16 *)inp, batch, row, col);
-    cuda_check(cudaGetLastError());
 }
 
 /*
