@@ -170,7 +170,7 @@ __global__ void add_bias_kernel(float* out, const float* bias, int T, int OC)
 template <typename T>
 __device__ __forceinline__ T sigmoid(const T x)
 {
-    return 1.0f / (1.0f + expf(type_to_float(-x)));
+    return 1.0f / (1.0f + expf((float)(-x)));
 }
 
 template <typename T>
@@ -195,10 +195,10 @@ __global__ void swiglu_kernel(T* out, const T* inp, int B, int TT, int C)
 
     #pragma unroll
     for (int i = 0; i < Packed128<T>::size; i++) {
-        float val1 = type_to_float(packed_fc1[i]);
-        float val2 = type_to_float(packed_fc2[i]);
+        float val1 = (float)(packed_fc1[i]);
+        float val2 = (float)(packed_fc2[i]);
         float swish_val = val2 * sigmoid(val2);
-        packed_out[i] = float_to_type<T>(swish_val * val1);
+        packed_out[i] = (T)(swish_val * val1);
     }
 
     store128(out + idx, packed_out);
@@ -227,12 +227,12 @@ __global__ void rope_qkv_kernel(T *out, const T *inp, const float *freqs,
 
     int base = b * (row * (NH + 2 * kvNH) * HS) + r * ((NH + 2 * kvNH) * HS) + h * HS + 2 * d;
 
-    float x_read = type_to_float<T>(inp[base]);
-    float x_imag = type_to_float<T>(inp[base + 1]);
+    float x_read = (float)(inp[base]);
+    float x_imag = (float)(inp[base + 1]);
     float result_real = x_read * c - x_imag * s;
     float result_imag = x_read * s + x_imag * c;
-    out[base] = float_to_type<T>(result_real);
-    out[base + 1] = float_to_type<T>(result_imag);
+    out[base] = (T)(result_real);
+    out[base + 1] = (T)(result_imag);
 }
 
 __global__ void get_embeddings_kernel(void* out, const int* inp, const void* embd, int batch, int row, size_t bytes_per_row)
@@ -488,7 +488,7 @@ __global__ void argmax_kernel(int *out, const T *inp, int row, int col)
         Packed128<T> packed_vals = load128cs(&inp[r * col + i * size]);
         #pragma unroll
         for (int j = 0; j < size; j++) {
-            float val = type_to_float<T>(packed_vals[j]);
+            float val = (float)(packed_vals[j]);
             if (val > max_val) {
                 max_val = val;
                 max_idx = i * size + j;
@@ -549,7 +549,7 @@ __global__ void rmsnorm_kernel(T* __restrict__ out, const T* __restrict__ inp,
 
         #pragma unroll
         for (int j = 0; j < packed_size; j++) {
-            float val = type_to_float<T>(packed_xi[j]);
+            float val = (float)(packed_xi[j]);
             thread_sum2 += val * val;
         }
     }
@@ -581,9 +581,9 @@ __global__ void rmsnorm_kernel(T* __restrict__ out, const T* __restrict__ inp,
 
         #pragma unroll
         for (int j = 0; j < packed_size; j++) {
-            float val = type_to_float<T>(packed_val[j]);
+            float val = (float)(packed_val[j]);
             float normalized = val * s * weight[i * packed_size + j]; // x / sqrt(mean(x**2) + eps) * weight
-            packed_result[j] = float_to_type<T>(normalized);
+            packed_result[j] = (T)(normalized);
         }
         store128(o + i * packed_size, packed_result);
     }
@@ -684,7 +684,7 @@ __global__ void scaled_softmax_kernel(T* out, const T* inp, int B, int NH, int T
     // Step 1: Find maximum while applying scale and causal mask
     float maxval = -INFINITY;
     for (int i = tid; i < TT; i += blockDim.x) {
-        float val = (i <= row_idx) ? type_to_float<T>(x[i]) * scale : -INFINITY;
+        float val = (i <= row_idx) ? (float)(x[i]) * scale : -INFINITY;
         maxval = fmaxf(maxval, val);
     }
 
@@ -713,12 +713,12 @@ __global__ void scaled_softmax_kernel(T* out, const T* inp, int B, int NH, int T
     for (int i = tid; i < TT; i += blockDim.x) {
         float val;
         if (i <= row_idx) {
-            val = expf(type_to_float<T>(x[i]) * scale - offset);
+            val = expf((float)(x[i]) * scale - offset);
         } else {
             val = 0.0f;
         }
 
-        out[row_start + i] = float_to_type<T>(val);  // store intermediate result
+        out[row_start + i] = (T)(val);  // store intermediate result
         sumval += val;
     }
 
@@ -745,10 +745,10 @@ __global__ void scaled_softmax_kernel(T* out, const T* inp, int B, int NH, int T
     // write final normalized values
     for (int i = tid; i < TT; i += blockDim.x) {
         if (i <= row_idx) {
-            float val = type_to_float<T>(out[row_start + i]) * inv_sum;
-            out[row_start + i] = float_to_type<T>(val);
+            float val = (float)(out[row_start + i]) * inv_sum;
+            out[row_start + i] = (T)(val);
         } else {
-            out[row_start + i] = float_to_type<T>(0.0f);
+            out[row_start + i] = (T)(0.0f);
         }
     }
 }

@@ -206,36 +206,6 @@ static __device__ __forceinline__ float f16_to_f32(half f) {
     return __half2float(f);
 }
 
-template<typename T>
-__device__ __forceinline__ float type_to_float(T val) {
-    static_assert(std::is_same<T, float>::value ||
-                 std::is_same<T, nv_bfloat16>::value ||
-                 std::is_same<T, half>::value,
-                 "Unsupported type for conversion to float");
-    if constexpr (std::is_same<T, float>::value) {
-        return val;
-    } else if constexpr (std::is_same<T, nv_bfloat16>::value) {
-        return bf16_to_f32(val);
-    } else if constexpr (std::is_same<T, half>::value) {
-        return f16_to_f32(val);
-    }
-}
-
-template<typename T>
-__device__ __forceinline__ T float_to_type(float val) {
-    static_assert(std::is_same<T, float>::value ||
-                 std::is_same<T, nv_bfloat16>::value ||
-                 std::is_same<T, half>::value,
-                 "Unsupported type for conversion from float");
-    if constexpr (std::is_same<T, float>::value) {
-        return val;
-    } else if constexpr (std::is_same<T, nv_bfloat16>::value) {
-        return f32_to_bf16(val);
-    } else if constexpr (std::is_same<T, half>::value) {
-        return f32_to_f16(val);
-    }
-}
-
 static inline float* malloc_rand_float(size_t N)
 {
     float* arr = (float*)malloc(N * sizeof(float));
