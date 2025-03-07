@@ -223,64 +223,13 @@ __global__ void rope_qkv_kernel(T *out, const T *inp, const float *freqs,
     float s = freqs[freq_idx + 1];
 
     int base = b * (row * (NH + 2 * kvNH) * HS) + r * ((NH + 2 * kvNH) * HS) + h * HS + 2 * d;
-    if constexpr (std::is_same<T, float>::value) {
-        float x_real = inp[base];
-        float x_imag = inp[base + 1];
 
-        float result_real = x_real * c - x_imag * s;
-        float result_imag = x_real * s + x_imag * c;
-
-        out[base] = result_real;
-        out[base + 1] = result_imag;
-    } else if constexpr (std::is_same<T, nv_bfloat16>::value) {
-	    float x_real = bf16_to_f32(inp[base]);
-	    float x_imag = bf16_to_f32(inp[base + 1]);
-
-	    float result_real = x_real * c - x_imag * s;
-	    float result_imag = x_real * s + x_imag * c;
-	    out[base] = f32_to_bf16(result_real);
-	    out[base + 1] = f32_to_bf16(result_imag);
-    } else if constexpr (std::is_same<T, half>::value) {
-        float x_real = f16_to_f32(inp[base]);
-        float x_imag = f16_to_f32(inp[base + 1]);
-
-        float result_real = x_real * c - x_imag * s;
-        float result_imag = x_real * s + x_imag * c;
-        out[base] = f32_to_f16(result_real);
-        out[base + 1] = f32_to_f16(result_imag);
-    } else {
-        panic("Unsupported type for rope_qkv_kernel");
-    }
-}
-
-__global__ void rope_kernel(float *out, const float *inp, const float *freqs, int B, int T, int NH, int HS)
-{
-    int idx = blockIdx.x * blockDim.x + threadIdx.x;
-    int HS_half = HS / 2;
-    if (idx >= B * T * NH * HS_half)
-        return;
-
-    // decode the individual indices
-    int b = idx / (T * NH * HS_half);
-    int t = (idx / (NH * HS_half)) % T;
-    int h = (idx / HS_half) % NH;
-    int d = idx % HS_half;
-    int idx_bt = b * (T * NH * HS) + t * (NH * HS);
-    int idx_bth = idx_bt + h * HS;
-    int idxi = idx_bth + 2 * d; // index in the input
-
-    // fetch and compute frequency
-    float freq = freqs[d];
-    float angle = t * freq;
-    float freqs_cos = cosf(angle);
-    float freqs_sin = sinf(angle);
-
-    // fetch the input
-    float x_real = inp[idxi];
-    float x_imag = inp[idxi + 1];
-    // apply the rotation
-    out[idxi] = x_real * freqs_cos - x_imag * freqs_sin;
-    out[idxi + 1] = x_real * freqs_sin + x_imag * freqs_cos;
+    float x_read = type_to_float<T>(inp[base]);
+    float x_imag = type_to_float<T>(inp[base + 1]);
+    float result_real = x_read * c - x_imag * s;
+    float result_imag = x_read * s + x_imag * c;
+    out[base] = float_to_type<T>(result_real);
+    out[base + 1] = float_to_type<T>(result_imag);
 }
 
 __global__ void get_embeddings_kernel(void* out, const int* inp, const void* embd, int batch, int row, size_t bytes_per_row)
@@ -609,10 +558,11 @@ __global__ void rmsnorm_kernel(T* __restrict__ out, const T* __restrict__ inp,
 
     // Apply normalization and scaling
     T* o = out + idx * C;
+    #pragma unroll
     for (int i = threadIdx.x; i < C; i += blockDim.x) {
         float val = type_to_float<T>(__ldcs(x + i));
         float normalized = val * s * weight[i]; // x / sqrt(mean(x**2) + eps) * weight
-        __stcs(o + i, float_to_type<T>(normalized));
+        __stwb(o + i, float_to_type<T>(normalized));
     }
 }
 
@@ -1208,26 +1158,6 @@ void cuda_mq_sdpa(void *out, const void *inp, int batch, int row, int qNH, int H
 void cuda_rope_qkv(void *out, const void *inp, const void *freqs, int batch, int row, int NH, int kvNH, int HS)
 {
     cuda_rope_qkv<float>((float *)out, (const float *)inp, (const float *)freqs, batch, row, NH, kvNH, HS);
-}
-
-/*
- * RoPE: Rotated Positional Embedding for a single tensor
- *
- * @param out: output matrix(batch, row, NH, HS)
- * @param inp: input matrix(batch, row, NH, HS)
- * @freqs: raw frequency tensor to compute the rotation angle (HS/2)
- * @param batch: batch size
- * @param row: row size
- * @param NH: number of heads
- * @param HS: head size
- */
-void cuda_rope(void *out, const void *inp, const void *freqs, int batch, int row, int NH, int HS)
-{
-    int block_size = 256;
-    int total_threads = batch * row * NH * HS / 2;  // divided by 2 since we process pairs
-    int num_blocks = CEIL_DIV(total_threads, block_size);
-    rope_kernel<<<num_blocks, block_size, 0, main_stream>>>((float *)out, (const float *)inp, (const float *)freqs, batch, row, NH, HS);
-    cuda_check(cudaGetLastError());
 }
 
 /*
