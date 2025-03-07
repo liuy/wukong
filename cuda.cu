@@ -532,10 +532,18 @@ __global__ void rmsnorm_kernel(T* __restrict__ out, const T* __restrict__ inp,
     // Thread coarsening through the row
     float thread_sum2 = 0.0f;
 
-    // Each thread accumulates multiple elements
-    for (int i = threadIdx.x; i < C; i += blockDim.x) {
-        float xi = type_to_float<T>(__ldcs(x + i));
-        thread_sum2 += xi * xi;
+    // Calculate the number of elements to process per thread using Packed128 (4 elements at a time)
+    int packed_size = Packed128<T>::size;
+
+    // Each thread accumulates multiple elements using Packed128
+    for (int i = threadIdx.x; i < C / packed_size; i += blockDim.x) {
+        Packed128<T> packed_xi = load128cs(x + i * packed_size);
+
+        #pragma unroll
+        for (int j = 0; j < packed_size; j++) {
+            float val = type_to_float<T>(packed_xi[j]);
+            thread_sum2 += val * val;
+        }
     }
 
     // Warp-level reduction for sum of squares
@@ -556,13 +564,20 @@ __global__ void rmsnorm_kernel(T* __restrict__ out, const T* __restrict__ inp,
     block_sum2 /= C; // mean(x**2)
     float s = rsqrtf(block_sum2 + eps); // 1 / sqrt(mean(x**2) + eps)
 
-    // Apply normalization and scaling
+    // Apply normalization and scaling using Packed128 for better memory access
     T* o = out + idx * C;
-    #pragma unroll
-    for (int i = threadIdx.x; i < C; i += blockDim.x) {
-        float val = type_to_float<T>(__ldcs(x + i));
-        float normalized = val * s * weight[i]; // x / sqrt(mean(x**2) + eps) * weight
-        __stwb(o + i, float_to_type<T>(normalized));
+
+    for (int i = threadIdx.x; i < C / packed_size; i += blockDim.x) {
+        Packed128<T> packed_val = load128cs(x + i * packed_size);
+        Packed128<T> packed_result;
+
+        #pragma unroll
+        for (int j = 0; j < packed_size; j++) {
+            float val = type_to_float<T>(packed_val[j]);
+            float normalized = val * s * weight[i * packed_size + j]; // x / sqrt(mean(x**2) + eps) * weight
+            packed_result[j] = float_to_type<T>(normalized);
+        }
+        store128(o + i * packed_size, packed_result);
     }
 }
 
@@ -570,6 +585,9 @@ template <typename T>
 void cuda_rmsnorm(T *out, const T *inp, const float *weight, int row, int col, float eps)
 {
     const int block_size = 256;
+
+    int size = Packed128<T>::size;
+    assert(col % size == 0 && "Column size must be a multiple of Packed128<T>::size for cuda_rmsnorm");
     rmsnorm_kernel<T><<<row, block_size, 0, main_stream>>>(out, inp, weight, row, col, eps);
     cuda_check(cudaGetLastError());
 }
