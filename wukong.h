@@ -190,22 +190,6 @@ __device__ void store128cg(ElementType* target, Packed128<ElementType> value) {
 // convenience macro for calculating grid/block dimensions for kernels
 #define CEIL_DIV(M, N) (((M) + (N)-1) / (N))
 
-static __device__ __forceinline__ nv_bfloat16 f32_to_bf16(float f) {
-    return __float2bfloat16(f);
-}
-
-static __device__ __forceinline__ float bf16_to_f32(nv_bfloat16 f) {
-    return __bfloat162float(f);
-}
-
-static __device__ __forceinline__ half f32_to_f16(float f) {
-    return __float2half(f);
-}
-
-static __device__ __forceinline__ float f16_to_f32(half f) {
-    return __half2float(f);
-}
-
 static inline float* malloc_rand_float(size_t N)
 {
     float* arr = (float*)malloc(N * sizeof(float));

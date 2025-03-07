@@ -398,7 +398,7 @@ __global__ void dequantize_Q8_0(T *out, const block_q8_0 *inp, int row, int nb, 
     int b = block_idx % nb; // block index
 
     const block_q8_0 *block = inp + r * nb + b;
-    float scale = __half2float(block->scale);
+    float scale = (float)(block->scale);
 
     // Calculate base output index
     int out_base = r * nb * bs + b * bs;
