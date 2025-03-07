@@ -600,7 +600,7 @@ func (r *cudaRunner) ToHost(a *Tensor) any {
 		return unsafe.Slice((*float64)(unsafe.Pointer(&dst[0])), a.Len())
 	case GGML_TYPE_I8:
 		return unsafe.Slice((*int8)(unsafe.Pointer(&dst[0])), a.Len())
-	case GGML_TYPE_I16:
+	case GGML_TYPE_I16, GGML_TYPE_F16:
 		return unsafe.Slice((*int16)(unsafe.Pointer(&dst[0])), a.Len())
 	case GGML_TYPE_I32:
 		return unsafe.Slice((*int32)(unsafe.Pointer(&dst[0])), a.Len())
@@ -672,9 +672,17 @@ func (r *cudaRunner) Embedding(embd, ids *Tensor) (*Tensor, error) {
 	if ids.NumDims() == 2 {
 		batch = ids.GetDim(0)
 	}
-	out := C.cuda_malloc(C.size_t(batch * row * col * int(unsafe.Sizeof(float32(0)))))
+	out := unsafe.Pointer(nil)
+	dtype := embd.dtype
+	if embd.dtype == GGML_TYPE_F32 || embd.dtype == GGML_TYPE_F16 || embd.dtype == GGML_TYPE_BF16 {
+		out = C.cuda_malloc(C.size_t(batch * row * col * embd.ElemTypeSize() / embd.ElemBlockSize()))
+	} else {
+		// For quantized types, output is default to f16
+		out = C.cuda_malloc(C.size_t(batch * row * col * 2))
+		dtype = GGML_TYPE_F16
+	}
 	C.cuda_embedding(out, ids.dptr, embd.dptr, C.int(batch), C.int(row), C.int(col), C.int(embd.dtype))
-	ret := NewTensor(Shape{batch, row, col}, GGML_TYPE_F32)
+	ret := NewTensor(Shape{batch, row, col}, dtype)
 	ret.dptr = out
 	return ret, nil
 }
@@ -699,20 +707,6 @@ func (r *cudaRunner) Cat(a, b *Tensor) (*Tensor, error) {
 	ret := NewTensor(shape, a.dtype)
 	ret.dptr = out
 	return ret, nil
-}
-
-func slicesEqual(slice1, slice2 []int) bool {
-	if len(slice1) != len(slice2) {
-		return false
-	}
-
-	for i := range slice1 {
-		if slice1[i] != slice2[i] {
-			return false
-		}
-	}
-
-	return true
 }
 
 func (r *cudaRunner) GroupQueryAttention(embeds, freqs, norm_weight, qkv_weight, out_weight *Tensor, NH int, kvNH int, eps float32) error {

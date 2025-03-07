@@ -385,9 +385,9 @@ __global__ void div_kernel(float *out, const float *a, const float *b, int row, 
     }
 }
 
-__global__ void dequantize_Q8_0(float *out, const block_q8_0 *inp, int row, int nb, int bs)
+template <typename T>
+__global__ void dequantize_Q8_0(T *out, const block_q8_0 *inp, int row, int nb, int bs)
 {
-    extern __shared__ block_q8_0 shared_block[];
     int block_idx = blockIdx.x * blockDim.x + threadIdx.x;
     int total_blocks = row * nb;
 
@@ -398,14 +398,24 @@ __global__ void dequantize_Q8_0(float *out, const block_q8_0 *inp, int row, int 
     int b = block_idx % nb; // block index
 
     const block_q8_0 *block = inp + r * nb + b;
-    shared_block[threadIdx.x] = *block;
-    __syncthreads();
+    float scale = __half2float(block->scale);
 
-    float scale = __half2float(shared_block[threadIdx.x].scale);
+    // Calculate base output index
+    int out_base = r * nb * bs + b * bs;
+
+    constexpr int packed_size = Packed128<T>::size;
+
+    assert(bs % packed_size == 0 && "bs must be a multiple of Packed128<T>::size");
     #pragma unroll
-    for (int i = 0; i < bs; ++i) {
-	    int out_idx = r * nb * bs + b * bs + i;
-	    out[out_idx] = scale * shared_block[threadIdx.x].d[i];
+    for (int i = 0; i < bs; i += packed_size) {
+        Packed128<T> packed_out;
+
+        #pragma unroll
+        for (int j = 0; j < packed_size; j++) {
+            packed_out[j] = (T)(scale * block->d[i + j]);
+        }
+
+        store128(out + out_base + i, packed_out);
     }
 }
 
@@ -981,6 +991,30 @@ void predict(T *out, T *ff, const float *norm_weight, const T *out_weight, int b
     cuda_free(logits);
 }
 
+template <typename T>
+void cuda_dequantize(T *out, const void *inp, int row, int col, int type)
+{
+    if (type < 0 || type >= GGML_TYPE_COUNT)
+        panic("Unsupported quantization type: %d", type);
+
+    auto info = dtype_infos[type];
+    int nb = col / info.block_size;
+    int bs = info.block_size;
+    int total_blocks = row * nb;
+    int block_size = 256;
+    int num_blocks = CEIL_DIV(total_blocks, block_size);
+    size_t shared_mem_size = block_size * sizeof(block_q8_0);
+    assert(shared_mem_size <= cuda_max_shared_mem_per_block);
+    switch (type) {
+    case GGML_TYPE_Q8_0:
+	    dequantize_Q8_0<T><<<num_blocks, block_size, shared_mem_size, main_stream>>>((T *)out, (const block_q8_0 *)inp, row, nb, bs);
+	    break;
+    default:
+	    panic("Unsupported quantization type: %s", dtype_infos[type].name);
+	}
+    cuda_check(cudaGetLastError());
+}
+
 extern "C" {
 void cuda_init(int idx)
 {
@@ -1070,9 +1104,9 @@ void cuda_matmul(void *out, const void *inp, const void *weight, const void *bia
     } else if (dtype == GGML_TYPE_F32) {
         return cuda_matmul_cublaslt_f32(out, inp, weight, bias, row, column, oc);
     } else {
-        void *dw = cuda_malloc(oc * column * sizeof(float));
-        cuda_dequantize(dw, weight, oc, column, dtype);
-        cuda_matmul_cublaslt_f32(out, inp, dw, bias, row, column, oc);
+        void *dw = cuda_malloc(oc * column * sizeof(half));
+        cuda_dequantize<half>((half *)dw, weight, oc, column, dtype);
+        cuda_matmul_cublaslt_f16(out, inp, dw, bias, row, column, oc);
         cuda_free(dw);
         return;
     }
@@ -1217,7 +1251,7 @@ void cuda_embedding(void* out, const void *inp, const void *embd, int batch, int
     }
     void *dout = cuda_malloc(batch * row * bytes_per_row);
     get_embeddings_kernel<<<grid_size, block_size, 0, main_stream>>>(dout, (const int*)inp, embd, batch, row, bytes_per_row);
-    cuda_dequantize(out, dout, batch * row, col, dtype);
+    cuda_dequantize<half>((half *)out, dout, batch * row, col, dtype);
     cuda_check(cudaGetLastError());
     cuda_free(dout);
 }
@@ -1269,27 +1303,10 @@ void cuda_div(void *out, const void *a, const void *b, int row, int col)
  * @param col: column size
  * @param type: quantization dtype
  */
+
 void cuda_dequantize(void *out, const void *inp, int row, int col, int type)
 {
-    if (type < 0 || type >= GGML_TYPE_COUNT)
-        panic("Unsupported quantization type: %d", type);
-
-    auto info = dtype_infos[type];
-    int nb = col / info.block_size;
-    int bs = info.block_size;
-    int total_blocks = row * nb;
-    int block_size = 256;
-    int num_blocks = CEIL_DIV(total_blocks, block_size);
-    size_t shared_mem_size = block_size * sizeof(block_q8_0);
-    assert(shared_mem_size <= cuda_max_shared_mem_per_block);
-    switch (type) {
-    case GGML_TYPE_Q8_0:
-	    dequantize_Q8_0<<<num_blocks, block_size, shared_mem_size, main_stream>>>((float *)out, (const block_q8_0 *)inp, row, nb, bs);
-	    break;
-    default:
-	    panic("Unsupported quantization type: %s", dtype_infos[type].name);
-	}
-    cuda_check(cudaGetLastError());
+    cuda_dequantize<float>((float *)out, inp, row, col, type);
 }
 
 /*
@@ -1313,12 +1330,12 @@ void cuda_group_query_attention(void *out, const void *embeds, const void *freqs
         group_query_attention<nv_bfloat16>((nv_bfloat16 *)out, (const nv_bfloat16 *)embeds, (const float *)freqs,
                                            (const float *)norm_weight, (const nv_bfloat16 *)qkv_weight,
                                            (const nv_bfloat16 *)out_weight, batch, row, NH, kvNH, HS, eps, dtype);
-    } else if (dtype == GGML_TYPE_F16) {
-        group_query_attention<half>((half *)out, (const half *)embeds, (const float *)freqs, (const float *)norm_weight,
-                                    (const half *)qkv_weight, (const half *)out_weight, batch, row, NH, kvNH, HS, eps, dtype);
-    } else {
+    } else if (dtype == GGML_TYPE_F32) {
         group_query_attention<float>((float *)out, (const float *)embeds, (const float *)freqs, (const float *)norm_weight,
                                      (const float *)qkv_weight, (const float *)out_weight, batch, row, NH, kvNH, HS, eps, dtype);
+    } else {
+        group_query_attention<half>((half *)out, (const half *)embeds, (const float *)freqs, (const float *)norm_weight,
+                                    (const half *)qkv_weight, (const half *)out_weight, batch, row, NH, kvNH, HS, eps, dtype);
     }
 }
 
@@ -1373,14 +1390,14 @@ void cuda_feed_forward(void *out, const void *attn, const void *norm_weight, con
         feed_forward<nv_bfloat16>((nv_bfloat16 *)out, (const nv_bfloat16 *)attn, (const float *)norm_weight,
                                   (const nv_bfloat16 *)fc_weight, (const nv_bfloat16 *)out_weight,
                                   batch, row, col, ffl, eps, dtype);
-    } else if (dtype == GGML_TYPE_F16) {
-        feed_forward<half>((half *)out, (const half *)attn, (const float *)norm_weight,
-                           (const half *)fc_weight, (const half *)out_weight,
-                           batch, row, col, ffl, eps, dtype);
-    } else {
+    } else if (dtype == GGML_TYPE_F32) {
         feed_forward<float>((float *)out, (const float *)attn, (const float *)norm_weight,
                             (const float *)fc_weight, (const float *)out_weight,
                             batch, row, col, ffl, eps, dtype);
+    } else {
+        feed_forward<half>((half *)out, (const half *)attn, (const float *)norm_weight,
+                           (const half *)fc_weight, (const half *)out_weight,
+                           batch, row, col, ffl, eps, dtype);
     }
 }
 
@@ -1389,12 +1406,12 @@ void cuda_classify(void *out, void *ff, const void *norm_weight, const void *out
     if (dtype == GGML_TYPE_BF16) {
         classify<nv_bfloat16>((nv_bfloat16 *)out, (nv_bfloat16 *)ff, (const float *)norm_weight, (const nv_bfloat16 *)out_weight,
                               batch, row, col, wsize, eps, dtype);
-    } else if (dtype == GGML_TYPE_F16) {
-        classify<half>((half *)out, (half *)ff, (const float *)norm_weight, (const half *)out_weight,
-                       batch, row, col, wsize, eps, dtype);
-    } else {
+    } else if (dtype == GGML_TYPE_F32) {
         classify<float>((float *)out, (float *)ff, (const float *)norm_weight, (const float *)out_weight,
                         batch, row, col, wsize, eps, dtype);
+    } else {
+        classify<half>((half *)out, (half *)ff, (const float *)norm_weight, (const half *)out_weight,
+                       batch, row, col, wsize, eps, dtype);
     }
 }
 
@@ -1403,12 +1420,12 @@ void cuda_predict(void *out, void *ff, const void *norm_weight, const void *out_
     if (dtype == GGML_TYPE_BF16) {
         predict<nv_bfloat16>((nv_bfloat16 *)out, (nv_bfloat16 *)ff, (const float *)norm_weight, (const nv_bfloat16 *)out_weight,
                              batch, row, col, wsize, eps, dtype);
-    } else if (dtype == GGML_TYPE_F16) {
-        predict<half>((half *)out, (half *)ff, (const float *)norm_weight, (const half *)out_weight,
-                      batch, row, col, wsize, eps, dtype);
-    } else {
+    } else if (dtype == GGML_TYPE_F32) {
         predict<float>((float *)out, (float *)ff, (const float *)norm_weight, (const float *)out_weight,
                        batch, row, col, wsize, eps, dtype);
+    } else {
+        predict<half>((half *)out, (half *)ff, (const float *)norm_weight, (const half *)out_weight,
+                      batch, row, col, wsize, eps, dtype);
     }
 }
 
