@@ -974,12 +974,9 @@ void cuda_argmax(int *out, const T *inp, int row, int col)
 template <typename T>
 void classify(T *out, T *ff, const float *norm_weight, const T *out_weight, int batch, int row, int col, int wsize, float eps, int dtype)
 {
-    T *ffn = (T *)ff + batch * col; // reuse the memory of ff
-
-    assert(batch * 2 <= row);
     cuda_get_row<T>(ff, ff, batch, row, col, -1); // out shape: (batch, col)
-    cuda_rmsnorm<T>(ffn, ff, (const float *)norm_weight, batch, col, eps);
-    cuda_matmul(out, ffn, out_weight, nullptr, batch, col, wsize, dtype); // (batch, col) @ (wsize, col)^T
+    cuda_rmsnorm<T>(ff, ff, (const float *)norm_weight, batch, col, eps);
+    cuda_matmul(out, ff, out_weight, nullptr, batch, col, wsize, dtype); // (batch, col) @ (wsize, col)^T
 }
 
 template <typename T>
