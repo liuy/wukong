@@ -142,7 +142,6 @@ func runHandler(ctx context.Context, c *cmd.Command) error {
 			if err != nil {
 				return err
 			}
-			fmt.Println()
 			sb.Reset()
 		}
 	}

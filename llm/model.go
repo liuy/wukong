@@ -129,6 +129,26 @@ func (m *Model) Generate(message map[string]string) error {
 	start := time.Now()
 	var ttft time.Duration
 	numtok := 0
+
+	printChan := make(chan string, 256)
+	doneChan := make(chan struct{})
+	go func() {
+		for str := range printChan {
+			if utf8.ValidString(str) {
+				buf.Print(str)
+				continue
+			}
+			// Llama3 model may output incomplete utf8 string, sigh ...
+			part.WriteString(str)
+			s := part.String()
+			if utf8.ValidString(s) {
+				buf.Print(s)
+				part.Reset()
+			}
+		}
+		close(doneChan)
+	}()
+
 	for {
 		select {
 		case <-sigChan:
@@ -145,24 +165,14 @@ func (m *Model) Generate(message map[string]string) error {
 			}
 			if pids[0] == m.EotId || pids[0] == -1 {
 				elapsed := time.Since(start)
-				stat := fmt.Sprintf("\n\n[%d Tokens, First Token: %.1fs, %.1f t/s]", numtok, ttft.Seconds(), float64(numtok)/elapsed.Seconds())
-				buf.FormatAdd(stat)
-				buf.FormatFlush()
+				stat := fmt.Sprintf("\n\n[**%d** Tokens, First Token: **%.1f**s, **%.1f** t/s]\n", numtok, ttft.Seconds(), float64(numtok)/elapsed.Seconds())
+				printChan <- stat
+				close(printChan)
+				<-doneChan
 				return nil
 			}
+			printChan <- m.Decode(pids[0])
 			ids[0] = append(ids[0], pids[0])
-			str := m.Decode(pids[0])
-			if utf8.ValidString(str) {
-				buf.FormatAdd(str)
-				continue
-			}
-			// Llama3 model may output incomplete utf8 string, sigh ...
-			part.WriteString(str)
-			s := part.String()
-			if utf8.ValidString(s) {
-				buf.FormatAdd(s)
-				part.Reset()
-			}
 		}
 	}
 }

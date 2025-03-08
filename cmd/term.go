@@ -575,8 +575,6 @@ type Buffer struct {
 	Width        int
 	Height       int
 	markdown     *MarkdownFormatter
-	printChan    chan string
-	doneChan     chan struct{}
 }
 
 func NewBuffer(prompt *Prompt) (*Buffer, error) {
@@ -598,16 +596,8 @@ func NewBuffer(prompt *Prompt) (*Buffer, error) {
 		Height:       height,
 		LineWidth:    lwidth,
 		markdown:     NewMarkdownFormatter(),
-		printChan:    make(chan string, 100),
-		doneChan:     make(chan struct{}),
 	}
 
-	go func() {
-		for str := range b.printChan {
-			b.print(str)
-		}
-		close(b.doneChan)
-	}()
 	return b, nil
 }
 
@@ -742,7 +732,7 @@ func (b *Buffer) DisplaySize() int {
 	return sum
 }
 
-func (b *Buffer) print(str string) {
+func (b *Buffer) Print(str string) {
 	if strings.HasSuffix(str, "\n") {
 		b.Buf = append(b.Buf, []rune(str)...)
 		formatted := b.markdown.Format(string(b.Buf))
@@ -763,15 +753,6 @@ func (b *Buffer) print(str string) {
 	}
 	fmt.Print(str)
 	b.Buf = append(b.Buf, []rune(str)...)
-}
-
-func (b *Buffer) FormatFlush() {
-	close(b.printChan)
-	<-b.doneChan
-}
-
-func (b *Buffer) FormatAdd(str string) {
-	b.printChan <- str
 }
 
 func (b *Buffer) Add(r rune) {
