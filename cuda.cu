@@ -294,6 +294,7 @@ void cuda_matmul_cublaslt(T *out, const T *inp, const T *weight, const T *bias,
     } else if constexpr (std::is_same<T, half>::value) {
         data_type = CUDA_R_16F;
         compute_type = CUBLAS_COMPUTE_32F;
+        cublasSetMathMode(cublas_handle, (cublasMath_t)(CUBLAS_DEFAULT_MATH | CUBLAS_MATH_DISALLOW_REDUCED_PRECISION_REDUCTION));
     } else {
         panic("Unsupported type for cuda_matmul_cublaslt");
     }
