@@ -30,13 +30,13 @@ make # kick start compiling
 ### Pull and Run the models from internet
 Right now we support pulling models from huggingface.co, modelscope.cn and ollama.com
 ```bash
-./wk run hf.co/bartowski/Llama-3.2-1B-Instruct-GGUF # Download and run model from huggingface.com
+./wk run hf.co/bartowski/Llama-3.2-1B-Instruct-GGUF:f16 # Download and run model from huggingface.com
 ```
 ```bash
-./wk run modelscope.cn/bartowski/Llama-3.2-1B-Instruct-GGUF # Download and run model from modelscople.cn of Alibaba
+./wk run modelscope.cn/bartowski/Llama-3.2-1B-Instruct-GGUF:f16 # Download and run model from modelscople.cn of Alibaba
 ```
 ```bash
-./wk run llama3.2:1b # Download and run model from ollama.com
+./wk run llama3.2:1b # Download and run model from ollama.com (default to Q8_0)
 ```
 
 
